@@ -55,7 +55,7 @@ df_prod['Koefisien Data'] = (df_prod['Tenaga'] * df_prod['Waktu']) / df_prod['Ou
 # =============================
 # KALIBRASI
 # =============================
-st.subheader("Kalibrasi Produktivitas")
+st.subheader("Kalibrasi Produktivitas per Jenis Pekerjaan")
 
 kal = []
 for act in df_prod['Aktivitas'].unique():
@@ -707,7 +707,7 @@ distribution_name = st.sidebar.selectbox(
 )
 dist_param = fit_distribution_params(df_prod, distribution_name)
 
-st.subheader("Histogram Produktivitas")
+st.subheader("Histogram Produktivitas per Jenis Pekerjaan")
 selected_activity = st.selectbox(
     "Pilih aktivitas untuk histogram produktivitas",
     sorted(df_prod["Aktivitas"].unique())
@@ -822,7 +822,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # STATISTIK DURASI PROBABILISTIK
     # =============================
-    st.subheader("Analisis Probabilistik Durasi Pekerjaan")
+    st.subheader("Analisis Probabilistik Durasi per Jenis Pekerjaan")
     df_stats = pd.DataFrame({
         "Statistik": ["Mean", "Std", "P50", "P60", "P70", "P80", "P90", "P100"],
         "Nilai": [
@@ -845,7 +845,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # HISTOGRAM
     # =============================
-    st.subheader("Histogram Durasi Simulasi")
+    st.subheader("Histogram Probabilistik Durasi per Jenis Pekerjaan")
     fig, ax = plt.subplots()
     ax.hist(results, bins=30)
     st.pyplot(fig)
@@ -871,7 +871,7 @@ if st.button("Jalankan Simulasi"):
         "Prob": [v/n_sim for v in critical_count.values()]
     }).sort_values(by="Prob", ascending=False)
 
-    st.subheader("Criticality Index")
+    st.subheader("Criticality Index (CI)")
     st.dataframe(
         df_cp.style.format({"Prob": "{:.3f}"}),
         use_container_width=True,
