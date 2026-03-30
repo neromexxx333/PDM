@@ -8,7 +8,7 @@ import time
 from io import BytesIO
 
 st.set_page_config(layout="wide")
-st.title("Probabilistic Construction Scheduling Tool")
+st.title("Aplikasi Penjadwalan Proyek Konstruksi Berbasis Resiko Produktivitas Tenaga Kerja")
 st.title("Pengembang: Ir. Eliatun, ST., MT.")
 st.title("Fakultas Teknik Universitas Lambung Mangkurat")
 st.markdown(
