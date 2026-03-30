@@ -544,7 +544,7 @@ def plot_network_diagram(df, df_path, max_paths=5):
             zorder=5
         )
 
-    ax.set_title("Sketsa Network Diagram Probabilistik")
+    ax.set_title("Sketsa Network Diagram Analisis Probabilistik")
     x_min, x_max = min(node_x), max(node_x)
     y_min, y_max = min(node_y), max(node_y)
     x_margin = max(1.0, (x_max - x_min) * 0.12)
@@ -891,7 +891,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # NETWORK DIAGRAM
     # =============================
-    st.subheader("Network Diagram")
+    st.subheader("Network Diagram Analisis Probabilistik")
     st.caption(
         "Lintasan kritis dengan probabilitas tertinggi diberi warna merah. "
         "Lintasan kritis berikutnya diberi warna berbeda berdasarkan urutan probabilitas."
