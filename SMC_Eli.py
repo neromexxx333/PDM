@@ -826,7 +826,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # SIMULASI MONTE CARLO
     # =============================
-    st.subheader("Hasil Simulasi Durasi Pekerjaan -- Simulasi Monte Carlo")
+    st.subheader("Hasil Simulasi Durasi Pekerjaan Metode Monte Carlo")
     st.dataframe(pd.DataFrame({"Durasi": results}).head(50))
 
     # =============================
@@ -913,7 +913,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # DETERMINISTIC COMPARISON
     # =============================
-    st.subheader("Analisis Deterministic")
+    st.subheader("Analisis Deterministik Lintasan Kritis")
 
     df_det_path = pd.DataFrame({
         "Path": [" -> ".join(path) for path in deterministic_paths],
