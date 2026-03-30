@@ -8,9 +8,19 @@ import time
 from io import BytesIO
 
 st.set_page_config(layout="wide")
-st.title("Aplikasi Penjadwalan Proyek Konstruksi Berbasis Resiko Produktivitas Tenaga Kerja")
-st.title("Pengembang: Ir. Eliatun, ST., MT.")
-st.title("Fakultas Teknik Universitas Lambung Mangkurat")
+st.title("Aplikasi Penjadwalan Proyek Konstruksi")
+st.title("Berbasis Resiko Produktivitas Tenaga Kerja")
+st.markdown(
+    """
+    <div style="font-size: 2.0rem; margin-top: 0.15rem; margin-bottom: 0.75rem;">
+        Pengembang: Ir. Eliatun, ST., MT.
+    </div>
+    <div style="font-size: 2.0rem; margin-top: 0.15rem; margin-bottom: 0.75rem;">
+        Fakultas Teknik Universitas Lambung Mangkurat
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 st.markdown(
     """
     <style>
