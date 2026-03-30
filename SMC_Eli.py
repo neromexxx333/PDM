@@ -394,7 +394,7 @@ def plot_risk_map(df_risk):
         fontsize=9
     )
 
-    ax.set_title("Peta Resiko Pekerjaan")
+    ax.set_title("Peta Resiko per Pekerjaan")
     ax.set_xlabel("Impact (Pengaruh terhadap Durasi Proyek)")
     ax.set_ylabel("Probability (Criticality Index)")
     ax.set_ylim(0, 1.05)
@@ -957,7 +957,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # TORNADO
     # =============================
-    st.subheader("Analisis Sensitivitas")
+    st.subheader("Analisis Sensitivitas per Jenis Pekerjaan")
 
     sens = {}
 
@@ -1004,7 +1004,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # PETA RESIKO
     # =============================
-    st.subheader("Peta Resiko Pekerjaan")
+    st.subheader("Peta Resiko per Pekerjaan")
     st.caption(
         "Probability diambil dari Criticality Index, Impact diambil dari nilai Tornado, dan Risk Score = CI x Impact Tornado."
     )
