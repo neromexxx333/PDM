@@ -9,6 +9,8 @@ from io import BytesIO
 
 st.set_page_config(layout="wide")
 st.title("Probabilistic Construction Scheduling Tool")
+st.title("Pengembang: Ir. Eliatun, ST., MT.")
+st.title("Fakultas Teknik Universitas Lambung Mangkurat")
 st.markdown(
     """
     <style>
@@ -41,7 +43,7 @@ df_prod = pd.read_excel(excel_book, sheet_name="Data_Produktivitas")
 st.subheader("Data Proyek")
 st.dataframe(df_proj)
 
-st.subheader("Data Produktivitas")
+st.subheader("Data Produktivitas per Jenis Pekerjaan")
 st.dataframe(df_prod)
 
 # =============================
@@ -165,7 +167,7 @@ def plot_productivity_histogram(act, distribution_name, dist_param):
 
         ax.plot(x, y, color="#E45756", linewidth=2, label=label)
 
-    ax.set_title(f"Histogram Produktivitas - {act}")
+    ax.set_title(f"Histogram Produktivitas per Jenis Pekerjaan - {act}")
     ax.set_xlabel("Produktivitas (p)")
     ax.set_ylabel("Density")
     ax.legend()
@@ -382,7 +384,7 @@ def plot_risk_map(df_risk):
         fontsize=9
     )
 
-    ax.set_title("Risk Map Aktivitas")
+    ax.set_title("Peta Resiko Pekerjaan")
     ax.set_xlabel("Impact (Pengaruh terhadap Durasi Proyek)")
     ax.set_ylabel("Probability (Criticality Index)")
     ax.set_ylim(0, 1.05)
@@ -741,7 +743,7 @@ if "Referensi_AHSP" in excel_book.sheet_names:
     raw_ahsp_ref = pd.read_excel(excel_book, sheet_name="Referensi_AHSP")
     df_ahsp_ref = standardize_ahsp_reference(raw_ahsp_ref)
 
-st.subheader("Pembanding Koefisien terhadap AHSP/SNI")
+st.subheader("Perbandingan Koefisien Produktivitas per Jenis Pekerjaan")
 if df_ahsp_ref is not None and not df_ahsp_ref.empty:
     df_coef_cmp = build_ahsp_comparison(df_coef, df_ahsp_ref)
     st.dataframe(
@@ -812,15 +814,15 @@ if st.button("Jalankan Simulasi"):
     st.success("Simulasi selesai")
 
     # =============================
-    # RAW SIMULASI
+    # SIMULASI MONTE CARLO
     # =============================
-    st.subheader("Raw Simulasi")
+    st.subheader("Hasil Simulasi Durasi Pekerjaan -- Simulasi Monte Carlo")
     st.dataframe(pd.DataFrame({"Durasi": results}).head(50))
 
     # =============================
-    # STATISTIK
+    # STATISTIK DURASI PROBABILISTIK
     # =============================
-    st.subheader("Statistik")
+    st.subheader("Analisis Probabilistik Durasi Pekerjaan")
     df_stats = pd.DataFrame({
         "Statistik": ["Mean", "Std", "P50", "P60", "P70", "P80", "P90", "P100"],
         "Nilai": [
@@ -851,7 +853,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # PROBABILISTIC CRITICAL PATH
     # =============================
-    st.subheader("Probabilistic Critical Path")
+    st.subheader("Analisis Probabilistic Lintasan Kritis")
 
     df_path = pd.DataFrame({
         "Path": list(path_count.keys()),
@@ -901,7 +903,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # DETERMINISTIC COMPARISON
     # =============================
-    st.subheader("Deterministic Comparison")
+    st.subheader("Analisis Deterministic")
 
     df_det_path = pd.DataFrame({
         "Path": [" -> ".join(path) for path in deterministic_paths],
@@ -945,7 +947,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # TORNADO
     # =============================
-    st.subheader("Analisis Sesnitivitas")
+    st.subheader("Analisis Sensitivitas")
 
     sens = {}
 
@@ -990,9 +992,9 @@ if st.button("Jalankan Simulasi"):
     st.pyplot(fig2)
 
     # =============================
-    # RISK MAP
+    # PETA RESIKO
     # =============================
-    st.subheader("Risk Map")
+    st.subheader("Peta Resiko")
     st.caption(
         "Probability diambil dari Criticality Index, Impact diambil dari nilai Tornado, dan Risk Score = CI x Impact Tornado."
     )
