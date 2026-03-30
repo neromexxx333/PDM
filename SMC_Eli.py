@@ -945,7 +945,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # TORNADO
     # =============================
-    st.subheader("Tornado Diagram")
+    st.subheader("Analisis Sesnitivitas")
 
     sens = {}
 
