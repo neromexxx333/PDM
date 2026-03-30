@@ -438,7 +438,8 @@ def plot_network_diagram(df, df_path, max_paths=5):
 
     base_edge_color = "#B0B0B0"
     base_node_edge = "#666666"
-    highlight_colors = ["#D62728", "#FF7F0E", "#2CA02C", "#9467BD", "#17BECF"]
+    highlight_colors = ["#D62728", "#1F77B4", "#2CA02C", "#9467BD", "#17BECF"]
+    highlight_fill_colors = ["#FDECEC", "#EAF2FB", "#EAF7EA", "#F2ECFA", "#E8FAFA"]
 
     # Base network in gray.
     for act, preds in pred_map.items():
@@ -461,10 +462,12 @@ def plot_network_diagram(df, df_path, max_paths=5):
 
     path_legend = []
     node_color_map = {}
+    node_fill_map = {}
     top_paths = df_path.head(max_paths).reset_index(drop=True)
 
     for idx, row in top_paths.iterrows():
         color = highlight_colors[idx % len(highlight_colors)]
+        fill_color = highlight_fill_colors[idx % len(highlight_fill_colors)]
         activities = [act.strip() for act in str(row["Path"]).split("->")]
 
         for start_act, end_act in zip(activities, activities[1:]):
@@ -486,6 +489,7 @@ def plot_network_diagram(df, df_path, max_paths=5):
 
         for act in activities:
             node_color_map.setdefault(act, color)
+            node_fill_map.setdefault(act, fill_color)
 
         path_legend.append(
             Line2D(
@@ -500,7 +504,7 @@ def plot_network_diagram(df, df_path, max_paths=5):
     node_y = [positions[act][1] for act in df["Aktivitas"]]
     node_edge_colors = [node_color_map.get(act, base_node_edge) for act in df["Aktivitas"]]
     node_face_colors = [
-        "#FFEAEA" if act in node_color_map else "#F8F8F8"
+        node_fill_map.get(act, "#F8F8F8")
         for act in df["Aktivitas"]
     ]
 
@@ -885,7 +889,7 @@ if st.button("Jalankan Simulasi"):
     df_network_legend.insert(
         0,
         "Warna",
-        ["Merah", "Oranye", "Hijau", "Ungu", "Toska"][:len(df_network_legend)]
+        ["Merah", "Biru", "Hijau", "Ungu", "Toska"][:len(df_network_legend)]
     )
     st.dataframe(
         df_network_legend.style.format({"Prob": "{:.3f}"}),
