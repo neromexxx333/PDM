@@ -290,9 +290,9 @@ def plot_coefficient_comparison(df_cmp):
         color="#E45756"
     )
 
-    ax.set_title("Perbandingan Koefisien Produktivitas: Observasi vs AHSP/SNI")
+    ax.set_title("Perbandingan Koefisien Produktivitas per Jenis Pekerjaan: Observasi vs AHSP/SNI")
     ax.set_xlabel("Jenis Pekerjaan")
-    ax.set_ylabel("Koefisien")
+    ax.set_ylabel("Koefisien Produktivitas")
     ax.set_xticks(x)
     ax.set_xticklabels(df_plot["Aktivitas"], rotation=0)
     ax.legend()
