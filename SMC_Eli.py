@@ -994,7 +994,7 @@ if st.button("Jalankan Simulasi"):
     # =============================
     # PETA RESIKO
     # =============================
-    st.subheader("Peta Resiko")
+    st.subheader("Peta Resiko Pekerjaan")
     st.caption(
         "Probability diambil dari Criticality Index, Impact diambil dari nilai Tornado, dan Risk Score = CI x Impact Tornado."
     )
