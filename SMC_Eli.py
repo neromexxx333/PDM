@@ -25,7 +25,7 @@ except ImportError:
 
 st.set_page_config(layout="wide")
 st.title("Aplikasi Penjadwalan Proyek Konstruksi")
-st.title("Berbasis Resiko Produktivitas Tenaga Kerja")
+st.title("Berbasis Risiko Produktivitas Tenaga Kerja")
 st.markdown(
     """
     <div style="font-size: 2.0rem; margin-top: 0.15rem; margin-bottom: 0.75rem;">
@@ -44,10 +44,34 @@ st.markdown(
     div[data-testid="stDataFrame"] [role="columnheader"] {
         font-size: 0.95rem;
     }
+    div[data-testid="stDataFrame"] [role="columnheader"] {
+        color: #FFFFFF !important;
+        font-weight: 700 !important;
+        text-align: center !important;
+        justify-content: center !important;
+    }
     </style>
     """,
     unsafe_allow_html=True
 )
+
+
+def render_table(df, formats=None, show_index=False, start_index_at_one=False):
+    table_df = df.copy()
+
+    if start_index_at_one:
+        table_df.index = np.arange(1, len(table_df) + 1)
+        show_index = True
+
+    styler = table_df.style
+    if formats:
+        styler = styler.format(formats)
+
+    st.dataframe(
+        styler,
+        use_container_width=False,
+        hide_index=not show_index
+    )
 
 # =============================
 # UPLOAD
@@ -67,10 +91,10 @@ df_proj = pd.read_excel(excel_book, sheet_name="Data_Proyek")
 df_prod = pd.read_excel(excel_book, sheet_name="Data_Produktivitas")
 
 st.subheader("Data Proyek")
-st.dataframe(df_proj)
+render_table(df_proj, show_index=True, start_index_at_one=True)
 
 st.subheader("Data Produktivitas per Jenis Pekerjaan")
-st.dataframe(df_prod)
+render_table(df_prod, show_index=True, start_index_at_one=True)
 
 # =============================
 # HITUNG PRODUKTIVITAS
@@ -89,11 +113,7 @@ for act in df_prod['Aktivitas'].unique():
     kal.append([act, data.mean(), data.std()])
 
 df_kal = pd.DataFrame(kal, columns=["Aktivitas","Mean p","Std Dev"])
-st.dataframe(
-    df_kal.style.format({"Mean p": "{:.3f}", "Std Dev": "{:.3f}"}),
-    use_container_width=True,
-    hide_index=True
-)
+render_table(df_kal, formats={"Mean p": "{:.3f}", "Std Dev": "{:.3f}"})
 mean_p_map = dict(zip(df_kal["Aktivitas"], df_kal["Mean p"]))
 std_p_map = dict(zip(df_kal["Aktivitas"], df_kal["Std Dev"].fillna(0.0)))
 
@@ -481,7 +501,7 @@ def plot_risk_map(df_risk):
         fontsize=9
     )
 
-    ax.set_title("Peta Resiko per Pekerjaan")
+    ax.set_title("Peta Risiko per Jenis Pekerjaan")
     ax.set_xlabel("Impact (Pengaruh terhadap Durasi Proyek)")
     ax.set_ylabel("Probability (Criticality Index)")
     ax.set_ylim(0, 1.05)
@@ -1316,8 +1336,9 @@ st.caption(
 )
 
 df_coef = build_productivity_coefficient_table(df_prod)
-st.dataframe(
-    df_coef.style.format({
+render_table(
+    df_coef,
+    formats={
         "Mean_p": "{:.3f}",
         "Std_p": "{:.3f}",
         "Mean_Koef_Data": "{:.3f}",
@@ -1326,9 +1347,7 @@ st.dataframe(
         "Min_Koef_Data": "{:.3f}",
         "Max_Koef_Data": "{:.3f}",
         "Koef_Setara_1_per_Mean_p": "{:.3f}"
-    }),
-    use_container_width=True,
-    hide_index=True
+    }
 )
 
 df_ahsp_ref = None
@@ -1339,17 +1358,16 @@ if "Referensi_AHSP" in excel_book.sheet_names:
 st.subheader("Perbandingan Koefisien Produktivitas per Jenis Pekerjaan")
 if df_ahsp_ref is not None and not df_ahsp_ref.empty:
     df_coef_cmp = build_ahsp_comparison(df_coef, df_ahsp_ref)
-    st.dataframe(
-        df_coef_cmp.style.format({
+    render_table(
+        df_coef_cmp,
+        formats={
             "Mean_p": "{:.3f}",
             "Mean_Koef_Data": "{:.3f}",
             "Koef AHSP": "{:.3f}",
             "Selisih": "{:.3f}",
             "Selisih_%": "{:.3f}",
             "Rasio_Data_vs_AHSP": "{:.3f}"
-        }),
-        use_container_width=True,
-        hide_index=True
+        }
     )
     st.pyplot(plot_coefficient_comparison(df_coef_cmp))
 else:
@@ -1413,7 +1431,7 @@ if st.button("Jalankan Simulasi"):
     # SIMULASI MONTE CARLO
     # =============================
     st.subheader("Hasil Simulasi Durasi Pekerjaan Metode Monte Carlo")
-    st.dataframe(pd.DataFrame({"Durasi": results}).head(50))
+    render_table(pd.DataFrame({"Durasi": results}).head(50), show_index=True, start_index_at_one=True)
 
     # =============================
     # STATISTIK DURASI PROBABILISTIK
@@ -1432,11 +1450,7 @@ if st.button("Jalankan Simulasi"):
             np.percentile(results, 100)
         ]
     })
-    st.dataframe(
-        df_stats.style.format({"Nilai": "{:.3f}"}),
-        use_container_width=True,
-        hide_index=True
-    )
+    render_table(df_stats, formats={"Nilai": "{:.3f}"})
 
     # =============================
     # HISTOGRAM
@@ -1456,11 +1470,7 @@ if st.button("Jalankan Simulasi"):
         "Prob": [v/n_sim for v in path_count.values()]
     }).sort_values(by="Prob", ascending=False)
 
-    st.dataframe(
-        df_path.style.format({"Prob": "{:.3f}"}),
-        use_container_width=True,
-        hide_index=True
-    )
+    render_table(df_path, formats={"Prob": "{:.3f}"})
 
     df_cp = pd.DataFrame({
         "Aktivitas": list(critical_count.keys()),
@@ -1468,11 +1478,7 @@ if st.button("Jalankan Simulasi"):
     }).sort_values(by="Prob", ascending=False)
 
     st.subheader("Criticality Index (CI)")
-    st.dataframe(
-        df_cp.style.format({"Prob": "{:.3f}"}),
-        use_container_width=True,
-        hide_index=True
-    )
+    render_table(df_cp, formats={"Prob": "{:.3f}"})
 
     # =============================
     # NETWORK DIAGRAM
@@ -1490,11 +1496,7 @@ if st.button("Jalankan Simulasi"):
         "Warna",
         ["Merah", "Biru", "Hijau", "Ungu", "Toska"][:len(df_network_legend)]
     )
-    st.dataframe(
-        df_network_legend.style.format({"Prob": "{:.3f}"}),
-        use_container_width=True,
-        hide_index=True
-    )
+    render_table(df_network_legend, formats={"Prob": "{:.3f}"})
     network_fig = plot_network_diagram(df_proj, df_path, deterministic_schedule)
     zoomable_network_fig = build_zoomable_network_figure(network_fig)
 
@@ -1526,11 +1528,7 @@ if st.button("Jalankan Simulasi"):
     })
 
     st.write("Deterministic Critical Path (berdasarkan mean productivity):")
-    st.dataframe(
-        df_det_path.style.format({"Durasi Proyek": "{:.3f}"}),
-        use_container_width=True,
-        hide_index=True
-    )
+    render_table(df_det_path, formats={"Durasi Proyek": "{:.3f}"})
 
     df_det_ci = pd.DataFrame({
         "Aktivitas": unique_activities,
@@ -1548,19 +1546,18 @@ if st.button("Jalankan Simulasi"):
         ascending=[False, False, True]
     )
 
-    st.write("Perbandingan Criticality Index deterministik vs probabilistik:")
-    st.dataframe(
-        df_ci_compare.style.format({
+    st.subheader("Perbandingan Criticality Index deterministik vs probabilistik")
+    render_table(
+        df_ci_compare,
+        formats={
             "Deterministik": "{:.3f}",
             "Probabilistik": "{:.3f}"
-        }),
-        use_container_width=True,
-        hide_index=True
+        }
     )
 
-    # =============================
-    # TORNADO
-    # =============================
+    # ==============================
+    # ANALISIS SENSITIVITAS (TORNADO)
+    # ==============================
     st.subheader("Analisis Sensitivitas per Jenis Pekerjaan")
 
     sens = {}
@@ -1592,40 +1589,35 @@ if st.button("Jalankan Simulasi"):
         "Pengaruh": list(sens.values())
     }).sort_values(by="Pengaruh")
 
-    st.write("Tabel Hasil Tornado:")
+    st.write("Tabel Hasil Sensitivitas per Jenis Pekerjaan:")
     df_s_table = df_s.sort_values(by="Pengaruh", ascending=False).reset_index(drop=True)
     df_s_table.insert(0, "Rank", range(1, len(df_s_table) + 1))
-    st.dataframe(
-        df_s_table.style.format({"Pengaruh": "{:.3f}"}),
-        use_container_width=True,
-        hide_index=True
-    )
+    render_table(df_s_table, formats={"Pengaruh": "{:.3f}"})
 
     fig2, ax2 = plt.subplots()
     ax2.barh(df_s["Aktivitas"], df_s["Pengaruh"])
     st.pyplot(fig2)
 
     # =============================
-    # PETA RESIKO
+    # PETA RISIKO
     # =============================
-    st.subheader("Peta Resiko per Pekerjaan")
+    st.subheader("Peta Risiko per Jenis Pekerjaan")
     st.caption(
-        "Probability diambil dari Criticality Index, Impact diambil dari nilai Tornado, dan Risk Score = CI x Impact Tornado."
+        "Probability diambil dari Criticality Index, Impact diambil dari nilai analisis sensitivitas, dan Skor Risiko = CI x Impact Sensitivitas."
     )
 
     df_risk = build_risk_map_table(df_cp, df_s)
     df_risk_display = df_risk.rename(columns={
         "Prob": "CI",
-        "Pengaruh": "Impact Tornado"
+        "Pengaruh": "Impact Sensitivitas",
+        "Risk Score": "Skor Risiko"
     })
-    st.dataframe(
-        df_risk_display[["Aktivitas", "CI", "Impact Tornado", "Risk Score", "Kategori Risiko"]]
-        .style.format({
+    render_table(
+        df_risk_display[["Aktivitas", "CI", "Impact Sensitivitas", "Skor Risiko", "Kategori Risiko"]],
+        formats={
             "CI": "{:.3f}",
-            "Impact Tornado": "{:.3f}",
-            "Risk Score": "{:.3f}"
-        }),
-        use_container_width=True,
-        hide_index=True
+            "Impact Sensitivitas": "{:.3f}",
+            "Skor Risiko": "{:.3f}"
+        }
     )
     st.pyplot(plot_risk_map(df_risk))
