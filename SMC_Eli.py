@@ -9,6 +9,14 @@ import time
 from io import BytesIO
 
 try:
+    from PIL import Image, ImageChops
+    PIL_AVAILABLE = True
+except ImportError:
+    Image = None
+    ImageChops = None
+    PIL_AVAILABLE = False
+
+try:
     import plotly.graph_objects as go
     PLOTLY_AVAILABLE = True
 except ImportError:
@@ -664,7 +672,6 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     df_activities = build_activity_table(df)
     df_relations = build_relation_table(df)
     positions, pred_map = build_network_positions(df)
-    fig, ax = plt.subplots(figsize=(15, 8))
 
     base_edge_color = "#B0B0B0"
     base_node_edge = "#666666"
@@ -692,6 +699,13 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     finish_x = max(x_values) + 2.0
     positions["__START__"] = (start_x, 0.0)
     positions["__FINISH__"] = (finish_x, 0.0)
+    all_pos_x = [pos[0] for pos in positions.values()]
+    all_pos_y = [pos[1] for pos in positions.values()]
+    span_x = max(all_pos_x) - min(all_pos_x)
+    span_y = max(all_pos_y) - min(all_pos_y)
+    fig_width = min(max(8.5, span_x * 0.95), 13.0)
+    fig_height = min(max(4.8, span_y * 0.95), 7.2)
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
     node_bounds = {
         act: (
@@ -1042,8 +1056,8 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     ax.set_title("Network Diagram PDM Probabilistik")
     x_min, x_max = min(all_x), max(all_x)
     y_min, y_max = min(all_y), max(all_y)
-    x_margin = max(1.6, (x_max - x_min) * 0.10)
-    y_margin = max(1.3, (y_max - y_min) * 0.18)
+    x_margin = max(0.65, (x_max - x_min) * 0.04)
+    y_margin = max(0.55, (y_max - y_min) * 0.08)
     ax.set_xlim(x_min - x_margin, x_max + x_margin)
     ax.set_ylim(y_min - y_margin, y_max + y_margin)
     ax.axis("off")
@@ -1056,7 +1070,7 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
             bbox_to_anchor=(1.01, 1.0)
         )
 
-    fig.tight_layout()
+    fig.tight_layout(pad=0.15)
     return fig
 
 
@@ -1070,10 +1084,29 @@ def build_zoomable_network_figure(matplotlib_fig):
         format="png",
         dpi=180,
         bbox_inches="tight",
+        pad_inches=0.03,
         facecolor="white"
     )
     buffer.seek(0)
-    image_array = plt.imread(buffer)
+
+    if PIL_AVAILABLE:
+        image = Image.open(buffer).convert("RGBA")
+        white_bg = Image.new("RGBA", image.size, (255, 255, 255, 255))
+        image = Image.alpha_composite(white_bg, image).convert("RGB")
+        diff = ImageChops.difference(image, Image.new("RGB", image.size, "white"))
+        bbox = diff.getbbox()
+
+        if bbox is not None:
+            pad = 10
+            left = max(bbox[0] - pad, 0)
+            top = max(bbox[1] - pad, 0)
+            right = min(bbox[2] + pad, image.size[0])
+            bottom = min(bbox[3] + pad, image.size[1])
+            image = image.crop((left, top, right, bottom))
+
+        image_array = np.array(image)
+    else:
+        image_array = plt.imread(buffer)
 
     if image_array.dtype != np.uint8:
         image_array = (np.clip(image_array, 0, 1) * 255).astype(np.uint8)
@@ -1099,7 +1132,7 @@ def build_zoomable_network_figure(matplotlib_fig):
     fig.update_layout(
         width=width,
         height=height,
-        margin=dict(l=10, r=10, t=10, b=10),
+        margin=dict(l=0, r=0, t=0, b=0),
         dragmode="pan",
         plot_bgcolor="white",
         paper_bgcolor="white",
