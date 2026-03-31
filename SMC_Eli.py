@@ -351,29 +351,33 @@ def build_ahsp_comparison(df_coef, df_ref):
         (df_cmp["Selisih"] / df_cmp["Koef AHSP"]) * 100,
         np.nan
     )
-    df_cmp["Rasio_Data_vs_AHSP"] = np.where(
+    df_cmp["Rasio_Data_vs_SNI(AHSP)"] = np.where(
         df_cmp["Koef AHSP"].notna() & (df_cmp["Koef AHSP"] != 0),
         df_cmp["Mean_Koef_Data"] / df_cmp["Koef AHSP"],
         np.nan
     )
     df_cmp["Interpretasi"] = np.where(
         df_cmp["Koef AHSP"].isna(),
-        "Referensi AHSP belum tersedia",
+        "Referensi SNI(AHSP) belum tersedia",
         np.where(
             df_cmp["Mean_Koef_Data"] < df_cmp["Koef AHSP"],
-            "Data lebih efisien dari AHSP",
+            "Data lebih efisien dari SNI(AHSP)",
             np.where(
                 df_cmp["Mean_Koef_Data"] > df_cmp["Koef AHSP"],
-                "Data lebih boros dari AHSP",
-                "Data setara dengan AHSP"
+                "Data lebih boros dari SNI(AHSP)",
+                "Data setara dengan SNI(AHSP)"
             )
         )
     )
+    df_cmp = df_cmp.rename(columns={
+        "Kode AHSP": "Kode SNI(AHSP)",
+        "Koef AHSP": "Koef SNI(AHSP)"
+    })
     return df_cmp
 
 
 def plot_coefficient_comparison(df_cmp):
-    df_plot = df_cmp.dropna(subset=["Koef AHSP"]).copy()
+    df_plot = df_cmp.dropna(subset=["Koef SNI(AHSP)"]).copy()
 
     fig, ax = plt.subplots(figsize=(10, 5))
 
@@ -381,7 +385,7 @@ def plot_coefficient_comparison(df_cmp):
         ax.text(
             0.5,
             0.5,
-            "Data pembanding AHSP/SNI belum tersedia",
+            "Data pembanding SNI(AHSP) belum tersedia",
             ha="center",
             va="center",
             fontsize=11
@@ -401,13 +405,13 @@ def plot_coefficient_comparison(df_cmp):
     )
     ax.bar(
         x + width / 2,
-        df_plot["Koef AHSP"],
+        df_plot["Koef SNI(AHSP)"],
         width,
-        label="AHSP/SNI",
+        label="SNI(AHSP)",
         color="#E45756"
     )
 
-    ax.set_title("Perbandingan Koefisien Produktivitas per Jenis Pekerjaan: Observasi vs AHSP/SNI")
+    ax.set_title("Perbandingan Koefisien Produktivitas per Jenis Pekerjaan: Observasi vs SNI(AHSP)")
     ax.set_xlabel("Jenis Pekerjaan")
     ax.set_ylabel("Koefisien Produktivitas")
     ax.set_xticks(x)
@@ -1363,17 +1367,17 @@ if df_ahsp_ref is not None and not df_ahsp_ref.empty:
         formats={
             "Mean_p": "{:.3f}",
             "Mean_Koef_Data": "{:.3f}",
-            "Koef AHSP": "{:.3f}",
+            "Koef SNI(AHSP)": "{:.3f}",
             "Selisih": "{:.3f}",
             "Selisih_%": "{:.3f}",
-            "Rasio_Data_vs_AHSP": "{:.3f}"
+            "Rasio_Data_vs_SNI(AHSP)": "{:.3f}"
         }
     )
     st.pyplot(plot_coefficient_comparison(df_coef_cmp))
 else:
     st.info(
-        "Referensi AHSP belum dibaca. Tambahkan sheet 'Referensi_AHSP' dengan kolom: "
-        "'Aktivitas', 'Kode AHSP', dan 'Koef AHSP' agar tabel pembanding muncul otomatis."
+        "Referensi SNI(AHSP) belum dibaca. Tambahkan sheet 'Referensi_AHSP' dengan kolom: "
+        "'Aktivitas', 'Kode SNI(AHSP)', dan 'Koef SNI(AHSP)' agar tabel pembanding muncul otomatis."
     )
 
 # =============================
