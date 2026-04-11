@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.patheffects as pe
 from scipy.stats import lognorm, norm
 from matplotlib.lines import Line2D
 from matplotlib.patches import FancyBboxPatch
@@ -71,6 +72,72 @@ def render_table(df, formats=None, show_index=False, start_index_at_one=False):
         styler,
         use_container_width=False,
         hide_index=not show_index
+    )
+
+
+EXPORT_DPI = 320
+
+
+def make_safe_filename(value):
+    safe_name = "".join(
+        ch if ch.isalnum() or ch in {"-", "_"} else "_"
+        for ch in str(value).strip().replace(" ", "_")
+    )
+    return safe_name.strip("_") or "gambar"
+
+
+def export_matplotlib_figure_to_jpg(fig, dpi=EXPORT_DPI):
+    try:
+        png_buffer = BytesIO()
+        fig.savefig(
+            png_buffer,
+            format="png",
+            dpi=dpi,
+            bbox_inches="tight",
+            pad_inches=0.05,
+            facecolor="white"
+        )
+        png_buffer.seek(0)
+
+        if PIL_AVAILABLE:
+            image = Image.open(png_buffer).convert("RGB")
+            jpg_buffer = BytesIO()
+            image.save(
+                jpg_buffer,
+                format="JPEG",
+                quality=100,
+                subsampling=0,
+                dpi=(dpi, dpi)
+            )
+            return jpg_buffer.getvalue()
+
+        jpg_buffer = BytesIO()
+        fig.savefig(
+            jpg_buffer,
+            format="jpeg",
+            dpi=dpi,
+            bbox_inches="tight",
+            pad_inches=0.05,
+            facecolor="white"
+        )
+        return jpg_buffer.getvalue()
+    except Exception:
+        return None
+
+
+def render_jpg_download_button(fig, filename_base, key, label="Simpan JPG HD (320 dpi)"):
+    jpg_bytes = export_matplotlib_figure_to_jpg(fig)
+
+    if jpg_bytes is None:
+        st.info("Ekspor JPG belum tersedia pada lingkungan ini.")
+        return
+
+    st.download_button(
+        label=label,
+        data=jpg_bytes,
+        file_name=f"{make_safe_filename(filename_base)}.jpg",
+        mime="image/jpeg",
+        key=key
     )
 
 # =============================
@@ -263,8 +330,9 @@ def plot_productivity_histogram(act, distribution_name, dist_param):
         density=True,
         alpha=0.70,
         color="#4C78A8",
-        edgecolor="white",
-        label="Data"
+        edgecolor="black",
+        linewidth=1,
+        label="Observed Data"
     )
 
     x_min = max(np.min(data) * 0.8, 1e-6)
@@ -276,17 +344,17 @@ def plot_productivity_histogram(act, distribution_name, dist_param):
         if distribution_name == "Normal":
             mu, sigma = params
             y = norm.pdf(x, loc=mu, scale=max(sigma, 1e-6))
-            label = f"Fit Normal (mu={mu:.3f}, sigma={sigma:.3f})"
+            label = f"Normal Fit (mu={mu:.3f}, sigma={sigma:.3f})"
         else:
             shape, loc, scale = params
             y = lognorm.pdf(x, shape, loc=loc, scale=scale)
-            label = f"Fit Lognormal (shape={shape:.3f})"
+            label = f"Lognormal Fit (shape={shape:.3f})"
 
         ax.plot(x, y, color="#E45756", linewidth=2, label=label)
 
-    ax.set_title(f"Histogram Produktivitas per Jenis Pekerjaan - {act}")
-    ax.set_xlabel("Produktivitas (p)")
-    ax.set_ylabel("Density")
+    ax.set_title(f"Productivity Histogram by Work Item - {act}")
+    ax.set_xlabel("Productivity (p)")
+    ax.set_ylabel("Probability Density")
     ax.legend()
     return fig
 
@@ -385,7 +453,7 @@ def plot_coefficient_comparison(df_cmp):
         ax.text(
             0.5,
             0.5,
-            "Data pembanding SNI(AHSP) belum tersedia",
+            "SNI (AHSP) reference data are not available",
             ha="center",
             va="center",
             fontsize=11
@@ -400,20 +468,24 @@ def plot_coefficient_comparison(df_cmp):
         x - width / 2,
         df_plot["Mean_Koef_Data"],
         width,
-        label="Observasi",
-        color="#4C78A8"
+        label="Observed Data",
+        color="#4C78A8",
+        edgecolor="black",
+        linewidth=1
     )
     ax.bar(
         x + width / 2,
         df_plot["Koef SNI(AHSP)"],
         width,
-        label="SNI(AHSP)",
-        color="#E45756"
+        label="SNI (AHSP) Reference",
+        color="#E45756",
+        edgecolor="black",
+        linewidth=1
     )
 
-    ax.set_title("Perbandingan Koefisien Produktivitas per Jenis Pekerjaan: Observasi vs SNI(AHSP)")
-    ax.set_xlabel("Jenis Pekerjaan")
-    ax.set_ylabel("Koefisien Produktivitas")
+    ax.set_title("Productivity Coefficient Comparison by Work Item: Observed Data vs. SNI (AHSP) Reference")
+    ax.set_xlabel("Work Item")
+    ax.set_ylabel("Productivity Coefficient")
     ax.set_xticks(x)
     ax.set_xticklabels(df_plot["Aktivitas"], rotation=0)
     ax.legend()
@@ -458,6 +530,11 @@ def plot_risk_map(df_risk):
         "Sedang": "#F2CF5B",
         "Rendah": "#54A24B"
     }
+    category_label_map = {
+        "Tinggi": "High",
+        "Sedang": "Medium",
+        "Rendah": "Low"
+    }
 
     for category in ["Tinggi", "Sedang", "Rendah"]:
         data = df_risk[df_risk["Kategori Risiko"] == category]
@@ -471,7 +548,7 @@ def plot_risk_map(df_risk):
             color=color_map[category],
             edgecolors="black",
             alpha=0.85,
-            label=category
+            label=category_label_map[category]
         )
 
         for _, row in data.iterrows():
@@ -491,7 +568,7 @@ def plot_risk_map(df_risk):
     ax.text(
         impact_threshold,
         1.02,
-        f"Impact threshold = {impact_threshold:.3f}",
+        f"Impact Threshold = {impact_threshold:.3f}",
         ha="left",
         va="bottom",
         fontsize=9
@@ -499,18 +576,18 @@ def plot_risk_map(df_risk):
     ax.text(
         0.01,
         prob_threshold,
-        f"Prob threshold = {prob_threshold:.3f}",
+        f"Probability Threshold = {prob_threshold:.3f}",
         ha="left",
         va="bottom",
         fontsize=9
     )
 
-    ax.set_title("Peta Risiko per Jenis Pekerjaan")
-    ax.set_xlabel("Impact (Pengaruh terhadap Durasi Proyek)")
+    ax.set_title("Risk Map by Work Item")
+    ax.set_xlabel("Impact on Project Duration")
     ax.set_ylabel("Probability (Criticality Index)")
     ax.set_ylim(0, 1.05)
     ax.grid(alpha=0.25, linestyle="--")
-    ax.legend(title="Kategori")
+    ax.legend(title="Risk Category")
     fig.tight_layout()
     return fig
 
@@ -704,6 +781,8 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     highlight_fill_colors = ["#FDECEC", "#EAF2FB", "#EAF7EA", "#F2ECFA", "#E8FAFA"]
     node_width = 1.55
     node_height = 1.05
+    endpoint_width = 1.55
+    endpoint_height = 0.88
 
     metrics_lookup = (
         schedule_metrics["metrics_df"]
@@ -715,14 +794,51 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     for _, row in df_relations.iterrows():
         outgoing_map.setdefault(row["Predecessor"], []).append(row["Aktivitas"])
 
+    incoming_lane_order = {}
+    incoming_lane_count = {}
+    for end_act, group in df_relations.groupby("Aktivitas"):
+        ordered_preds = sorted(
+            group["Predecessor"].dropna().astype(str).unique().tolist(),
+            key=lambda pred: (
+                -positions.get(pred, (0.0, 0.0))[1],
+                positions.get(pred, (0.0, 0.0))[0],
+                pred
+            )
+        )
+        incoming_lane_order[end_act] = {
+            pred: idx for idx, pred in enumerate(ordered_preds)
+        }
+        incoming_lane_count[end_act] = len(ordered_preds)
+
     start_acts = [act for act in df_activities["Aktivitas"] if not pred_map.get(act)]
     finish_acts = [act for act in df_activities["Aktivitas"] if not outgoing_map.get(act)]
+    finish_lane_acts = sorted(
+        finish_acts,
+        key=lambda act: (
+            -positions.get(act, (0.0, 0.0))[1],
+            positions.get(act, (0.0, 0.0))[0],
+            act
+        )
+    )
+    incoming_lane_order["__FINISH__"] = {
+        act: idx for idx, act in enumerate(finish_lane_acts)
+    }
+    incoming_lane_count["__FINISH__"] = len(finish_lane_acts)
 
     x_values = [pos[0] for pos in positions.values()]
     start_x = min(x_values) - 2.0
     finish_x = max(x_values) + 2.0
     positions["__START__"] = (start_x, 0.0)
     positions["__FINISH__"] = (finish_x, 0.0)
+    endpoint_metrics = {
+        "__START__": {"ES": 0.0, "EF": 0.0, "LS": 0.0, "LF": 0.0},
+        "__FINISH__": {
+            "ES": float(schedule_metrics["project_duration"]),
+            "EF": float(schedule_metrics["project_duration"]),
+            "LS": float(schedule_metrics["project_duration"]),
+            "LF": float(schedule_metrics["project_duration"])
+        }
+    }
     all_pos_x = [pos[0] for pos in positions.values()]
     all_pos_y = [pos[1] for pos in positions.values()]
     span_x = max(all_pos_x) - min(all_pos_x)
@@ -730,6 +846,14 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     fig_width = min(max(8.5, span_x * 0.95), 13.0)
     fig_height = min(max(4.8, span_y * 0.95), 7.2)
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    def draw_text(x, y, text, outline_width=1.1, **kwargs):
+        text_artist = ax.text(x, y, text, **kwargs)
+        text_artist.set_path_effects([
+            pe.withStroke(linewidth=outline_width, foreground="white"),
+            pe.Normal()
+        ])
+        return text_artist
 
     node_bounds = {
         act: (
@@ -740,12 +864,32 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         )
         for act in df_activities["Aktivitas"]
     }
-    node_bounds["__START__"] = (start_x - 0.45, start_x + 0.45, -0.25, 0.25)
-    node_bounds["__FINISH__"] = (finish_x - 0.45, finish_x + 0.45, -0.25, 0.25)
+    node_bounds["__START__"] = (
+        start_x - endpoint_width / 2,
+        start_x + endpoint_width / 2,
+        -endpoint_height / 2,
+        endpoint_height / 2
+    )
+    node_bounds["__FINISH__"] = (
+        finish_x - endpoint_width / 2,
+        finish_x + endpoint_width / 2,
+        -endpoint_height / 2,
+        endpoint_height / 2
+    )
 
     def edge_points(start_act, end_act, relation):
         x1, y1 = positions[start_act]
         x2, y2 = positions[end_act]
+
+        def finish_port_y():
+            lane_order = incoming_lane_order.get("__FINISH__", {})
+            lane_count = incoming_lane_count.get("__FINISH__", 1)
+            if end_act != "__FINISH__" or start_act not in lane_order or lane_count <= 1:
+                return y2
+
+            max_offset = min(endpoint_height * 0.28, 0.24)
+            offsets = np.linspace(max_offset, -max_offset, lane_count)
+            return y2 + float(offsets[lane_order[start_act]])
 
         pred_start = (x1 - node_width / 2, y1)
         pred_finish = (x1 + node_width / 2, y1)
@@ -753,11 +897,12 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         succ_finish = (x2 + node_width / 2, y2)
 
         if start_act == "__START__":
-            pred_start = (x1 + 0.45, y1)
-            pred_finish = (x1 + 0.45, y1)
+            pred_start = (x1 + endpoint_width / 2, y1)
+            pred_finish = (x1 + endpoint_width / 2, y1)
         if end_act == "__FINISH__":
-            succ_start = (x2 - 0.45, y2)
-            succ_finish = (x2 - 0.45, y2)
+            finish_y = finish_port_y()
+            succ_start = (x2 - endpoint_width / 2, finish_y)
+            succ_finish = (x2 - endpoint_width / 2, finish_y)
 
         if relation == "FS":
             return pred_finish, succ_start
@@ -775,10 +920,53 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         sign = "+" if lag >= 0 else ""
         return f"{rel}{sign}{lag:g}"
 
-    def draw_orthogonal_arrow(start_point, end_point, color, width, zorder):
+    def compute_bend_x(start_act, end_act, start_point, end_point):
+        x1, _ = start_point
+        x2, _ = end_point
+        bend_x = (x1 + x2) / 2
+
+        lane_count = incoming_lane_count.get(end_act, 1)
+        lane_order = incoming_lane_order.get(end_act, {})
+
+        if lane_count > 1 and start_act in lane_order:
+            if end_act == "__FINISH__":
+                right_bound = x2 - 0.05
+                left_bound = max(
+                    max(node_bounds[act][1] for act in finish_lane_acts) + 0.18,
+                    x1 + 0.22
+                )
+                if left_bound > right_bound:
+                    left_bound = min(left_bound, x2 - 0.12)
+                lane_t = lane_order[start_act] / max(lane_count - 1, 1)
+                bend_x = left_bound + (right_bound - left_bound) * lane_t
+                bend_x = min(max(bend_x, left_bound), right_bound)
+                return bend_x
+
+            if x2 >= x1:
+                left_bound = x1 + max(0.28, min(0.60, abs(x2 - x1) * 0.18))
+                right_bound = x2 - 0.22
+                if lane_count == 2:
+                    lane_t = float(lane_order[start_act])
+                else:
+                    lane_t = lane_order[start_act] / max(lane_count - 1, 1)
+                bend_x = left_bound + (right_bound - left_bound) * lane_t
+                bend_x = min(max(bend_x, left_bound), right_bound)
+            else:
+                left_bound = x2 + 0.22
+                right_bound = x1 - max(0.28, min(0.60, abs(x2 - x1) * 0.18))
+                if lane_count == 2:
+                    lane_t = float(lane_order[start_act])
+                else:
+                    lane_t = lane_order[start_act] / max(lane_count - 1, 1)
+                bend_x = left_bound + (right_bound - left_bound) * lane_t
+                bend_x = min(max(bend_x, left_bound), right_bound)
+
+        return bend_x
+
+    def draw_orthogonal_arrow(start_point, end_point, color, width, zorder, bend_x=None):
         x1, y1 = start_point
         x2, y2 = end_point
-        mid_x = (x1 + x2) / 2
+        mid_x = bend_x if bend_x is not None else (x1 + x2) / 2
 
         ax.plot([x1, mid_x], [y1, y1], color=color, lw=width, zorder=zorder)
         ax.plot([mid_x, mid_x], [y1, y2], color=color, lw=width, zorder=zorder)
@@ -797,28 +985,67 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         )
         return mid_x, y1, y2
 
-    def place_relation_label(base_x, base_y):
+    def estimate_relation_label_half_width(label_text):
+        return 0.12 + (0.05 * len(str(label_text)))
+
+    def place_relation_label(base_x, base_y, label_text):
         label_x = base_x
         label_y = base_y
-        x_pad = 0.16
-        y_pad = 0.12
-        y_gap = 0.24
+        label_half_width = estimate_relation_label_half_width(label_text)
+        x_pad = 0.18 + label_half_width
+        y_pad = 0.22
+        x_gap = 0.20 + (0.02 * len(str(label_text)))
+        y_gap = 0.32
 
-        for _ in range(8):
+        for _ in range(12):
             moved = False
             for x_min, x_max, y_min, y_max in node_bounds.values():
-                if (
-                    x_min - x_pad <= label_x <= x_max + x_pad
-                    and y_min - y_pad <= label_y <= y_max + y_pad
-                ):
-                    node_center_y = (y_min + y_max) / 2
-                    if label_y >= node_center_y:
-                        label_y = y_max + y_gap
+                left_bound = x_min - x_pad
+                right_bound = x_max + x_pad
+                bottom_bound = y_min - y_pad
+                top_bound = y_max + y_pad
+
+                if left_bound <= label_x <= right_bound and bottom_bound <= label_y <= top_bound:
+                    distances = {
+                        "left": abs(label_x - left_bound),
+                        "right": abs(right_bound - label_x),
+                        "bottom": abs(label_y - bottom_bound),
+                        "top": abs(top_bound - label_y)
+                    }
+                    nearest_side = min(distances, key=distances.get)
+
+                    if nearest_side == "left":
+                        label_x = left_bound - x_gap
+                    elif nearest_side == "right":
+                        label_x = right_bound + x_gap
+                    elif nearest_side == "bottom":
+                        label_y = bottom_bound - y_gap
                     else:
-                        label_y = y_min - y_gap
+                        label_y = top_bound + y_gap
+
                     moved = True
+                    break
             if not moved:
                 break
+
+        return label_x, label_y
+
+    def fine_tune_relation_label(label_x, label_y, label_text, start_act, end_act):
+        if (start_act, end_act, label_text) == ("I", "J", "FS+2"):
+            label_half_width = estimate_relation_label_half_width(label_text)
+            pred_right = node_bounds[start_act][1]
+            succ_left = node_bounds[end_act][0]
+            min_center_x = pred_right + label_half_width + 0.10
+            max_center_x = succ_left - label_half_width - 0.08
+            label_x = max(min_center_x, min(label_x - 0.30, max_center_x))
+
+        if (start_act, end_act, label_text) == ("J", "__FINISH__", "FS"):
+            label_half_width = estimate_relation_label_half_width(label_text)
+            pred_right = node_bounds[start_act][1]
+            succ_left = node_bounds[end_act][0]
+            min_center_x = pred_right + label_half_width + 0.12
+            max_center_x = succ_left - label_half_width - 0.08
+            label_x = min(max_center_x, max(label_x + 0.18, min_center_x))
 
         return label_x, label_y
 
@@ -845,7 +1072,7 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
                 [0], [0],
                 color=color,
                 lw=3,
-                label=f"CP{idx + 1} ({row['Prob']:.3f})"
+                label=f"Critical Path {idx + 1} (P={row['Prob']:.3f})"
             )
         )
 
@@ -868,17 +1095,28 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         zorder = 3 if is_highlighted else 1
 
         start_point, end_point = edge_points(start_act, end_act, relation)
-        mid_x, y1, y2 = draw_orthogonal_arrow(start_point, end_point, color, width, zorder)
+        bend_x = compute_bend_x(start_act, end_act, start_point, end_point)
+        mid_x, y1, y2 = draw_orthogonal_arrow(
+            start_point,
+            end_point,
+            color,
+            width,
+            zorder,
+            bend_x=bend_x
+        )
+        rel_text = relation_label(relation, lag)
         base_label_y = ((y1 + y2) / 2) + (0.18 if relation in {"SS", "FF"} else -0.18)
-        label_x, label_y = place_relation_label(mid_x, base_label_y)
+        label_x, label_y = place_relation_label(mid_x, base_label_y, rel_text)
+        label_x, label_y = fine_tune_relation_label(label_x, label_y, rel_text, start_act, end_act)
 
-        ax.text(
+        draw_text(
             label_x,
             label_y,
-            relation_label(relation, lag),
+            rel_text,
             ha="center",
             va="center",
-            fontsize=8.5,
+            fontsize=8.9,
+            fontweight="semibold",
             color=color if is_highlighted else "#555555",
             bbox=dict(boxstyle="round,pad=0.2", facecolor="white", edgecolor="none", alpha=0.92),
             zorder=6
@@ -889,16 +1127,18 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         draw_orthogonal_arrow(start_point, end_point, "#BDBDBD", 1.2, 0.8)
         label_x, label_y = place_relation_label(
             (start_point[0] + end_point[0]) / 2,
-            start_point[1] - 0.18
+            start_point[1] - 0.18,
+            "FS"
         )
-        ax.text(
+        draw_text(
             label_x,
             label_y,
             "FS",
             ha="center",
             va="center",
-            fontsize=8,
-            color="#777777",
+            fontsize=8.3,
+            fontweight="semibold",
+            color="#666666",
             bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9),
             zorder=5
         )
@@ -908,16 +1148,19 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         draw_orthogonal_arrow(start_point, end_point, "#BDBDBD", 1.2, 0.8)
         label_x, label_y = place_relation_label(
             (start_point[0] + end_point[0]) / 2,
-            start_point[1] - 0.18
+            start_point[1] - 0.18,
+            "FS"
         )
-        ax.text(
+        label_x, label_y = fine_tune_relation_label(label_x, label_y, "FS", act, "__FINISH__")
+        draw_text(
             label_x,
             label_y,
             "FS",
             ha="center",
             va="center",
-            fontsize=8,
-            color="#777777",
+            fontsize=8.3,
+            fontweight="semibold",
+            color="#666666",
             bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9),
             zorder=5
         )
@@ -940,7 +1183,8 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         bottom_divider_y = y - node_height * 0.14
         top_y = y + node_height * 0.27
         middle_y = y - node_height * 0.03
-        duration_x = x - node_width * 0.20
+        duration_x = x - node_width * 0.46
+        duration_y = middle_y
         bottom_y = y - node_height * 0.29
         tf_y = y - node_height * 0.43
         node_text_box = dict(
@@ -950,7 +1194,7 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
             alpha=1.0
         )
         duration_text_box = dict(
-            boxstyle="round,pad=0.04",
+            boxstyle="round,pad=0.02",
             facecolor=fill_color,
             edgecolor="none",
             alpha=1.0
@@ -974,84 +1218,96 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         ax.plot([x, x], [y - node_height / 2, bottom_divider_y], color=edge_color, lw=1.0, zorder=5)
 
         metrics = metrics_lookup[act]
-        ax.text(
+        draw_text(
             x - node_width * 0.24,
             top_y,
             f"{metrics['ES']:.1f}",
             ha="center",
             va="center",
-            fontsize=8.5,
+            fontsize=9.0,
+            fontweight="semibold",
+            color="#111111",
             bbox=node_text_box,
             zorder=8
         )
-        ax.text(
+        draw_text(
             x + node_width * 0.24,
             top_y,
             f"{metrics['EF']:.1f}",
             ha="center",
             va="center",
-            fontsize=8.5,
+            fontsize=9.0,
+            fontweight="semibold",
+            color="#111111",
             bbox=node_text_box,
             zorder=8
         )
-        ax.text(
+        draw_text(
             x,
             middle_y,
             act,
             ha="center",
             va="center",
-            fontsize=11.0,
+            fontsize=11.6,
             weight="bold",
+            color="#111111",
             bbox=node_text_box,
             zorder=8
         )
-        ax.text(
+        draw_text(
             duration_x,
-            middle_y,
+            duration_y,
             f"d={metrics['Durasi']:.1f}",
-            ha="center",
+            ha="left",
             va="center",
-            fontsize=8.0,
+            fontsize=8.4,
+            fontweight="semibold",
+            color="#111111",
             bbox=duration_text_box,
             zorder=8
         )
-        ax.text(
+        draw_text(
             x - node_width * 0.24,
             bottom_y,
             f"{metrics['LS']:.1f}",
             ha="center",
             va="center",
-            fontsize=8.5,
+            fontsize=9.0,
+            fontweight="semibold",
+            color="#111111",
             bbox=node_text_box,
             zorder=8
         )
-        ax.text(
+        draw_text(
             x + node_width * 0.24,
             bottom_y,
             f"{metrics['LF']:.1f}",
             ha="center",
             va="center",
-            fontsize=8.5,
+            fontsize=9.0,
+            fontweight="semibold",
+            color="#111111",
             bbox=node_text_box,
             zorder=8
         )
-        ax.text(
+        draw_text(
             x,
             tf_y,
             f"TF={metrics['TF']:.1f}",
             ha="center",
             va="center",
-            fontsize=7.8,
-            color="#555555",
+            fontsize=8.2,
+            fontweight="semibold",
+            color="#444444",
             bbox=node_text_box,
             zorder=8
         )
 
-    def draw_dummy_node(label, x, y):
+    def draw_endpoint_node(label, x, y, metrics):
         patch = FancyBboxPatch(
-            (x - 0.45, y - 0.25),
-            0.90,
-            0.50,
+            (x - endpoint_width / 2, y - endpoint_height / 2),
+            endpoint_width,
+            endpoint_height,
             boxstyle="round,pad=0.03,rounding_size=0.08",
             linewidth=1.8,
             edgecolor="#444444",
@@ -1060,7 +1316,97 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
             clip_on=False
         )
         ax.add_patch(patch)
-        ax.text(x, y, label, ha="center", va="center", fontsize=10.5, weight="bold", zorder=7)
+
+        top_divider_y = y + endpoint_height * 0.13
+        bottom_divider_y = y - endpoint_height * 0.13
+        top_y = y + endpoint_height * 0.30
+        middle_y = y
+        bottom_y = y - endpoint_height * 0.30
+        half_w = endpoint_width / 2
+
+        ax.plot(
+            [x - half_w, x + half_w],
+            [top_divider_y, top_divider_y],
+            color="#444444",
+            lw=1.0,
+            zorder=5
+        )
+        ax.plot(
+            [x - half_w, x + half_w],
+            [bottom_divider_y, bottom_divider_y],
+            color="#444444",
+            lw=1.0,
+            zorder=5
+        )
+        ax.plot([x, x], [top_divider_y, y + endpoint_height / 2], color="#444444", lw=1.0, zorder=5)
+        ax.plot([x, x], [y - endpoint_height / 2, bottom_divider_y], color="#444444", lw=1.0, zorder=5)
+
+        endpoint_text_box = dict(
+            boxstyle="round,pad=0.04",
+            facecolor="#F2F2F2",
+            edgecolor="none",
+            alpha=1.0
+        )
+        draw_text(
+            x - endpoint_width * 0.24,
+            top_y,
+            f"{metrics['ES']:.1f}",
+            ha="center",
+            va="center",
+            fontsize=8.6,
+            fontweight="semibold",
+            color="#111111",
+            bbox=endpoint_text_box,
+            zorder=7
+        )
+        draw_text(
+            x + endpoint_width * 0.24,
+            top_y,
+            f"{metrics['EF']:.1f}",
+            ha="center",
+            va="center",
+            fontsize=8.6,
+            fontweight="semibold",
+            color="#111111",
+            bbox=endpoint_text_box,
+            zorder=7
+        )
+        draw_text(
+            x,
+            middle_y,
+            label,
+            ha="center",
+            va="center",
+            fontsize=11.0,
+            weight="bold",
+            color="#111111",
+            bbox=endpoint_text_box,
+            zorder=7
+        )
+        draw_text(
+            x - endpoint_width * 0.24,
+            bottom_y,
+            f"{metrics['LS']:.1f}",
+            ha="center",
+            va="center",
+            fontsize=8.6,
+            fontweight="semibold",
+            color="#111111",
+            bbox=endpoint_text_box,
+            zorder=7
+        )
+        draw_text(
+            x + endpoint_width * 0.24,
+            bottom_y,
+            f"{metrics['LF']:.1f}",
+            ha="center",
+            va="center",
+            fontsize=8.6,
+            fontweight="semibold",
+            color="#111111",
+            bbox=endpoint_text_box,
+            zorder=7
+        )
 
     for act in df_activities["Aktivitas"]:
         x, y = positions[act]
@@ -1072,12 +1418,16 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
             node_fill_map.get(act, base_node_fill)
         )
 
-    draw_dummy_node("Start", *positions["__START__"])
-    draw_dummy_node("Finish", *positions["__FINISH__"])
+    draw_endpoint_node("Start", *positions["__START__"], endpoint_metrics["__START__"])
+    draw_endpoint_node("Finish", *positions["__FINISH__"], endpoint_metrics["__FINISH__"])
 
     all_x = [pos[0] for pos in positions.values()]
     all_y = [pos[1] for pos in positions.values()]
-    ax.set_title("Network Diagram PDM Probabilistik")
+    title = ax.set_title("Probabilistic PDM Network Diagram", fontsize=15, fontweight="bold", pad=10)
+    title.set_path_effects([
+        pe.withStroke(linewidth=1.2, foreground="white"),
+        pe.Normal()
+    ])
     x_min, x_max = min(all_x), max(all_x)
     y_min, y_max = min(all_y), max(all_y)
     x_margin = max(0.65, (x_max - x_min) * 0.04)
@@ -1087,12 +1437,15 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     ax.axis("off")
 
     if path_legend:
-        ax.legend(
+        legend = ax.legend(
             handles=path_legend,
-            title="Lintasan Kritis",
+            title="Critical Paths",
             loc="upper left",
-            bbox_to_anchor=(1.01, 1.0)
+            bbox_to_anchor=(1.01, 1.0),
+            prop={"size": 10.5, "weight": "semibold"},
+            title_fontsize=11.5
         )
+        legend.get_title().set_fontweight("bold")
 
     fig.tight_layout(pad=0.15)
     return fig
@@ -1106,7 +1459,7 @@ def build_zoomable_network_figure(matplotlib_fig):
     matplotlib_fig.savefig(
         buffer,
         format="png",
-        dpi=180,
+        dpi=320,
         bbox_inches="tight",
         pad_inches=0.03,
         facecolor="white"
@@ -1121,11 +1474,13 @@ def build_zoomable_network_figure(matplotlib_fig):
         bbox = diff.getbbox()
 
         if bbox is not None:
-            pad = 10
-            left = max(bbox[0] - pad, 0)
-            top = max(bbox[1] - pad, 0)
-            right = min(bbox[2] + pad, image.size[0])
-            bottom = min(bbox[3] + pad, image.size[1])
+            x_pad = 10
+            bbox_height = max(bbox[3] - bbox[1], 1)
+            y_pad = max(18, int(round(bbox_height * 0.08)))
+            left = max(bbox[0] - x_pad, 0)
+            top = max(bbox[1] - y_pad, 0)
+            right = min(bbox[2] + x_pad, image.size[0])
+            bottom = min(bbox[3] + y_pad, image.size[1])
             image = image.crop((left, top, right, bottom))
 
         image_array = np.array(image)
@@ -1136,6 +1491,16 @@ def build_zoomable_network_figure(matplotlib_fig):
         image_array = (np.clip(image_array, 0, 1) * 255).astype(np.uint8)
 
     height, width = image_array.shape[:2]
+    vertical_view_padding = max(int(round(height * 0.08)), 60)
+    effective_height = height + (2 * vertical_view_padding)
+    max_display_width = 1100
+
+    if width > max_display_width:
+        display_width = max_display_width
+        display_height = max(int(round(effective_height * (display_width / width))), 1)
+    else:
+        display_width = width
+        display_height = effective_height
 
     fig = go.Figure(go.Image(z=image_array))
     fig.update_traces(hoverinfo="skip")
@@ -1151,11 +1516,11 @@ def build_zoomable_network_figure(matplotlib_fig):
         zeroline=False,
         scaleanchor="x",
         scaleratio=1,
-        range=[height - 0.5, -0.5]
+        range=[height - 0.5 + vertical_view_padding, -0.5 - vertical_view_padding]
     )
     fig.update_layout(
-        width=width,
-        height=height,
+        width=display_width,
+        height=display_height,
         margin=dict(l=0, r=0, t=0, b=0),
         dragmode="pan",
         plot_bgcolor="white",
@@ -1329,7 +1694,14 @@ selected_activity = st.selectbox(
     "Pilih aktivitas untuk histogram produktivitas",
     sorted(df_prod["Aktivitas"].unique())
 )
-st.pyplot(plot_productivity_histogram(selected_activity, distribution_name, dist_param))
+productivity_hist_fig = plot_productivity_histogram(selected_activity, distribution_name, dist_param)
+st.pyplot(productivity_hist_fig)
+render_jpg_download_button(
+    productivity_hist_fig,
+    f"histogram_produktivitas_{selected_activity}",
+    key=f"download_histogram_produktivitas_{make_safe_filename(selected_activity)}"
+)
+plt.close(productivity_hist_fig)
 
 # =============================
 # KOEFISIEN PRODUKTIVITAS
@@ -1373,7 +1745,14 @@ if df_ahsp_ref is not None and not df_ahsp_ref.empty:
             "Rasio_Data_vs_SNI(AHSP)": "{:.3f}"
         }
     )
-    st.pyplot(plot_coefficient_comparison(df_coef_cmp))
+    coefficient_comparison_fig = plot_coefficient_comparison(df_coef_cmp)
+    st.pyplot(coefficient_comparison_fig)
+    render_jpg_download_button(
+        coefficient_comparison_fig,
+        "perbandingan_koefisien_produktivitas",
+        key="download_perbandingan_koefisien"
+    )
+    plt.close(coefficient_comparison_fig)
 else:
     st.info(
         "Referensi SNI(AHSP) belum dibaca. Tambahkan sheet 'Referensi_AHSP' dengan kolom: "
@@ -1428,6 +1807,8 @@ if st.button("Jalankan Simulasi"):
         progress.progress((i+1)/n_sim)
 
     results = np.array(results)
+    mean_duration = np.mean(results)
+    std_duration = np.std(results)
 
     st.success("Simulasi selesai")
 
@@ -1435,7 +1816,25 @@ if st.button("Jalankan Simulasi"):
     # SIMULASI MONTE CARLO
     # =============================
     st.subheader("Hasil Simulasi Durasi Pekerjaan Metode Monte Carlo")
-    render_table(pd.DataFrame({"Durasi": results}).head(50), show_index=True, start_index_at_one=True)
+    df_results = pd.DataFrame({"Durasi": results})
+    with st.expander("Lihat Data Hasil Simulasi Monte Carlo"):
+        render_table(
+            df_results,
+            formats={"Durasi": "{:.3f}"},
+            show_index=True,
+            start_index_at_one=True
+        )
+
+    st.write("Resume Hasil Simulasi Monte Carlo")
+    df_resume_mc = pd.DataFrame({
+        "Statistik": ["Xmin", "Xmax", "Xrata-rata"],
+        "Nilai": [
+            np.min(results),
+            np.max(results),
+            mean_duration
+        ]
+    })
+    render_table(df_resume_mc, formats={"Nilai": "{:.3f}"})
 
     # =============================
     # STATISTIK DURASI PROBABILISTIK
@@ -1444,8 +1843,8 @@ if st.button("Jalankan Simulasi"):
     df_stats = pd.DataFrame({
         "Statistik": ["Mean", "Std", "P50", "P60", "P70", "P80", "P90", "P100"],
         "Nilai": [
-            np.mean(results),
-            np.std(results),
+            mean_duration,
+            std_duration,
             np.percentile(results, 50),
             np.percentile(results, 60),
             np.percentile(results, 70),
@@ -1461,8 +1860,56 @@ if st.button("Jalankan Simulasi"):
     # =============================
     st.subheader("Histogram Probabilistik Durasi per Jenis Pekerjaan")
     fig, ax = plt.subplots()
-    ax.hist(results, bins=30)
+    hist_freq, hist_bins, _ = ax.hist(results, bins=30, edgecolor="black", linewidth=1)
+    ax.axvline(
+        mean_duration,
+        color="red",
+        linewidth=2,
+        label=f"Mean Duration = {mean_duration:.3f}"
+    )
+    ax.axvline(
+        mean_duration - std_duration,
+        color="red",
+        linestyle="--",
+        linewidth=1.8,
+        label=f"Mean - 1 SD = {mean_duration - std_duration:.3f}"
+    )
+    ax.axvline(
+        mean_duration + std_duration,
+        color="red",
+        linestyle="--",
+        linewidth=1.8,
+        label=f"Mean + 1 SD = {mean_duration + std_duration:.3f}"
+    )
+    ax.set_title("Probabilistic Project Duration Histogram")
+    ax.set_xlabel("Project Duration")
+    ax.set_ylabel("Frequency")
+    ax.legend()
     st.pyplot(fig)
+    render_jpg_download_button(
+        fig,
+        "histogram_probabilistik_durasi_proyek",
+        key="download_histogram_probabilistik_durasi"
+    )
+
+    df_hist_freq = pd.DataFrame({
+        "Bin Ke": np.arange(1, len(hist_freq) + 1),
+        "Batas Bawah": hist_bins[:-1],
+        "Batas Atas": hist_bins[1:],
+        "Lebar Bin": hist_bins[1:] - hist_bins[:-1],
+        "Frekuensi": np.rint(hist_freq).astype(int)
+    })
+    st.write(f"Tabel Frekuensi Histogram Durasi Proyek (Jumlah Bin: {len(hist_freq)})")
+    render_table(
+        df_hist_freq,
+        formats={
+            "Batas Bawah": "{:.3f}",
+            "Batas Atas": "{:.3f}",
+            "Lebar Bin": "{:.3f}"
+        },
+        show_index=False
+    )
+    plt.close(fig)
 
     # =============================
     # PROBABILISTIC CRITICAL PATH
@@ -1508,17 +1955,22 @@ if st.button("Jalankan Simulasi"):
         st.caption("Gunakan scroll mouse untuk zoom, drag untuk pan, dan tombol modebar untuk reset view.")
         st.plotly_chart(
             zoomable_network_fig,
-            use_container_width=True,
+            use_container_width=False,
             config={
                 "scrollZoom": True,
                 "displaylogo": False,
                 "modeBarButtonsToAdd": ["zoomIn2d", "zoomOut2d", "resetScale2d"]
             }
         )
-        plt.close(network_fig)
     else:
         st.info("Plotly belum terpasang, sehingga network diagram ditampilkan dalam mode statis.")
         st.pyplot(network_fig)
+    render_jpg_download_button(
+        network_fig,
+        "network_diagram_analisis_probabilistik",
+        key="download_network_diagram_probabilistik"
+    )
+    plt.close(network_fig)
 
     # =============================
     # DETERMINISTIC COMPARISON
@@ -1599,8 +2051,17 @@ if st.button("Jalankan Simulasi"):
     render_table(df_s_table, formats={"Pengaruh": "{:.3f}"})
 
     fig2, ax2 = plt.subplots()
-    ax2.barh(df_s["Aktivitas"], df_s["Pengaruh"])
+    ax2.barh(df_s["Aktivitas"], df_s["Pengaruh"], edgecolor="black", linewidth=1, color="#4C78A8")
+    ax2.set_title("Sensitivity Analysis by Work Item")
+    ax2.set_xlabel("Impact on Project Duration")
+    ax2.set_ylabel("Work Item")
     st.pyplot(fig2)
+    render_jpg_download_button(
+        fig2,
+        "analisis_sensitivitas_jenis_pekerjaan",
+        key="download_analisis_sensitivitas"
+    )
+    plt.close(fig2)
 
     # =============================
     # PETA RISIKO
@@ -1624,4 +2085,11 @@ if st.button("Jalankan Simulasi"):
             "Skor Risiko": "{:.3f}"
         }
     )
-    st.pyplot(plot_risk_map(df_risk))
+    risk_map_fig = plot_risk_map(df_risk)
+    st.pyplot(risk_map_fig)
+    render_jpg_download_button(
+        risk_map_fig,
+        "peta_risiko_jenis_pekerjaan",
+        key="download_peta_risiko"
+    )
+    plt.close(risk_map_fig)
