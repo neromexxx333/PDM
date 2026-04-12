@@ -8,6 +8,7 @@ from matplotlib.lines import Line2D
 from matplotlib.patches import FancyBboxPatch
 import time
 from io import BytesIO
+from html import escape
 
 try:
     from PIL import Image, ImageChops
@@ -57,12 +58,23 @@ st.markdown(
 )
 
 
-def render_table(df, formats=None, show_index=False, start_index_at_one=False):
+def prepare_table_dataframe(df, formats=None, show_index=False, start_index_at_one=False):
     table_df = df.copy()
 
     if start_index_at_one:
         table_df.index = np.arange(1, len(table_df) + 1)
         show_index = True
+
+    return table_df, show_index
+
+
+def render_table(df, formats=None, show_index=False, start_index_at_one=False):
+    table_df, show_index = prepare_table_dataframe(
+        df,
+        formats=formats,
+        show_index=show_index,
+        start_index_at_one=start_index_at_one
+    )
 
     styler = table_df.style
     if formats:
@@ -73,6 +85,118 @@ def render_table(df, formats=None, show_index=False, start_index_at_one=False):
         use_container_width=False,
         hide_index=not show_index
     )
+
+
+def render_wrapped_table(
+    df,
+    formats=None,
+    show_index=False,
+    start_index_at_one=False,
+    wide_columns=None
+):
+    table_df, show_index = prepare_table_dataframe(
+        df,
+        formats=formats,
+        show_index=show_index,
+        start_index_at_one=start_index_at_one
+    )
+    display_df = table_df.copy()
+
+    if formats:
+        for col, fmt in formats.items():
+            if col not in display_df.columns:
+                continue
+
+            def format_value(value):
+                if pd.isna(value):
+                    return ""
+                if callable(fmt):
+                    return fmt(value)
+                try:
+                    return fmt.format(value)
+                except Exception:
+                    return value
+
+            display_df[col] = display_df[col].map(format_value)
+
+    wide_columns = set(wide_columns or [])
+    header_html = []
+    row_html = []
+
+    if show_index:
+        header_html.append('<th class="wrapped-col-index">No.</th>')
+
+    for col in display_df.columns:
+        classes = ["wrapped-col"]
+        if col in wide_columns:
+            classes.append("wrapped-col-wide")
+        header_html.append(
+            f'<th class="{" ".join(classes)}">{escape(str(col))}</th>'
+        )
+
+    for idx, row in display_df.iterrows():
+        cells = []
+        if show_index:
+            cells.append(f'<td class="wrapped-col-index">{escape(str(idx))}</td>')
+
+        for col in display_df.columns:
+            classes = ["wrapped-col"]
+            if col in wide_columns:
+                classes.append("wrapped-col-wide")
+            value = "" if pd.isna(row[col]) else row[col]
+            cells.append(
+                f'<td class="{" ".join(classes)}">{escape(str(value))}</td>'
+            )
+
+        row_html.append(f"<tr>{''.join(cells)}</tr>")
+
+    table_html = f"""
+    <style>
+    .wrapped-table-container {{
+        width: 100%;
+        overflow-x: auto;
+        margin-bottom: 0.5rem;
+    }}
+    .wrapped-table {{
+        width: max-content;
+        min-width: 100%;
+        border-collapse: collapse;
+        table-layout: auto;
+    }}
+    .wrapped-table th,
+    .wrapped-table td {{
+        border: 1px solid rgba(127, 127, 127, 0.30);
+        padding: 0.55rem 0.70rem;
+        vertical-align: top;
+        text-align: left;
+        white-space: nowrap;
+        word-break: normal;
+        overflow-wrap: normal;
+    }}
+    .wrapped-table th {{
+        background: rgba(127, 127, 127, 0.12);
+        font-weight: 700;
+    }}
+    .wrapped-table .wrapped-col-index {{
+        width: 3.8rem;
+        text-align: center;
+    }}
+    .wrapped-table .wrapped-col-wide {{
+        min-width: 24rem;
+        max-width: 38rem;
+        white-space: normal !important;
+        word-break: break-word;
+        overflow-wrap: anywhere;
+    }}
+    </style>
+    <div class="wrapped-table-container">
+        <table class="wrapped-table">
+            <thead><tr>{''.join(header_html)}</tr></thead>
+            <tbody>{''.join(row_html)}</tbody>
+        </table>
+    </div>
+    """
+    st.markdown(table_html, unsafe_allow_html=True)
 
 
 EXPORT_DPI = 320
@@ -156,6 +280,8 @@ excel_book = pd.ExcelFile(BytesIO(file.getvalue()))
 # =============================
 df_proj = pd.read_excel(excel_book, sheet_name="Data_Proyek")
 df_prod = pd.read_excel(excel_book, sheet_name="Data_Produktivitas")
+activity_work_type_map = {}
+activity_work_type_source = "Deteksi keyword otomatis"
 
 st.subheader("Data Proyek")
 render_table(df_proj, show_index=True, start_index_at_one=True)
@@ -299,22 +425,22 @@ def fit_distribution_params(df, distribution_name):
     return dist_param
 
 
-def sample_productivity(act, dist_param, distribution_name):
+def sample_productivity(act, dist_param, distribution_name, rng):
     params = dist_param.get(act)
 
     if params is not None:
         if distribution_name == "Normal":
             mu, sigma = params
-            p = np.random.normal(mu, sigma)
+            p = rng.normal(mu, sigma)
         else:
             shape, loc, scale = params
-            p = lognorm.rvs(shape, loc=loc, scale=scale)
+            p = lognorm.rvs(shape, loc=loc, scale=scale, random_state=rng)
     else:
         fallback_mean = mean_p_map.get(act, 2.0)
         fallback_std = std_p_map.get(act, 0.1)
         if pd.isna(fallback_std) or fallback_std <= 0:
             fallback_std = 0.1
-        p = np.random.normal(fallback_mean, fallback_std)
+        p = rng.normal(fallback_mean, fallback_std)
 
     return max(p, 0.1)
 
@@ -385,6 +511,86 @@ def standardize_ahsp_reference(df):
     df_ref["Koef AHSP"] = pd.to_numeric(df_ref["Koef AHSP"], errors="coerce")
     df_ref = df_ref.dropna(subset=["Koef AHSP"])
     return df_ref
+
+
+def standardize_activity_work_type_reference(df):
+    aliases = {
+        "Aktivitas": [
+            "Aktivitas", "Kode Aktivitas", "Kode", "Activity", "ID Aktivitas"
+        ],
+        "Jenis Pekerjaan": [
+            "Jenis Pekerjaan", "Uraian Pekerjaan", "Nama Pekerjaan",
+            "Deskripsi Pekerjaan", "Work Item", "Item Pekerjaan"
+        ]
+    }
+
+    rename_map = {}
+    for target, options in aliases.items():
+        for col in options:
+            if col in df.columns:
+                rename_map[col] = target
+                break
+
+    df_ref = df.rename(columns=rename_map).copy()
+    required_cols = ["Aktivitas", "Jenis Pekerjaan"]
+
+    if not all(col in df_ref.columns for col in required_cols):
+        return None
+
+    df_ref = df_ref[required_cols].dropna(subset=["Aktivitas", "Jenis Pekerjaan"]).copy()
+    df_ref["Aktivitas"] = df_ref["Aktivitas"].astype(str).str.strip()
+    df_ref["Jenis Pekerjaan"] = df_ref["Jenis Pekerjaan"].astype(str).str.strip()
+    df_ref = df_ref[
+        (df_ref["Aktivitas"] != "") &
+        (df_ref["Jenis Pekerjaan"] != "") &
+        (df_ref["Aktivitas"].str.lower() != "nan") &
+        (df_ref["Jenis Pekerjaan"].str.lower() != "nan")
+    ]
+    return df_ref.drop_duplicates(subset=["Aktivitas"], keep="first")
+
+
+def build_activity_work_type_map(df_project, excel_book=None):
+    work_type_map = {}
+    source_labels = []
+
+    direct_ref = standardize_activity_work_type_reference(df_project)
+    if direct_ref is not None and not direct_ref.empty:
+        work_type_map.update(dict(zip(direct_ref["Aktivitas"], direct_ref["Jenis Pekerjaan"])))
+        source_labels.append("Data_Proyek")
+
+    if excel_book is not None:
+        candidate_sheets = [
+            "Mapping_Aktivitas",
+            "Referensi_Aktivitas",
+            "Master_Aktivitas",
+            "Jenis_Pekerjaan",
+            "Work_Type_Map"
+        ]
+        for sheet_name in candidate_sheets:
+            if sheet_name not in excel_book.sheet_names:
+                continue
+
+            try:
+                df_ref_raw = pd.read_excel(excel_book, sheet_name=sheet_name)
+            except Exception:
+                continue
+
+            df_ref = standardize_activity_work_type_reference(df_ref_raw)
+            if df_ref is None or df_ref.empty:
+                continue
+
+            for _, row in df_ref.iterrows():
+                work_type_map.setdefault(row["Aktivitas"], row["Jenis Pekerjaan"])
+            source_labels.append(sheet_name)
+
+    source_label = ", ".join(source_labels) if source_labels else "Deteksi keyword otomatis"
+    return work_type_map, source_label
+
+
+activity_work_type_map, activity_work_type_source = build_activity_work_type_map(
+    df_proj,
+    excel_book
+)
 
 
 def build_productivity_coefficient_table(df):
@@ -592,6 +798,178 @@ def plot_risk_map(df_risk):
     return fig
 
 
+def detect_work_type(activity_name, activity_work_type_map=None):
+    mapped_name = None
+    if activity_work_type_map:
+        mapped_name = activity_work_type_map.get(str(activity_name).strip())
+
+    name = str(mapped_name if mapped_name else activity_name).strip().lower()
+    keyword_groups = [
+        ("Pondasi", ["pondasi", "foundation", "bore pile", "pancang", "pile cap", "footplat", "sloof"]),
+        ("Pekerjaan Tanah", ["galian", "urugan", "tanah", "cut and fill", "backfill", "excav", "subgrade"]),
+        ("Bekisting", ["bekisting", "formwork", "shuttering", "form"]),
+        ("Pembesian", ["pembesian", "rebar", "tulangan", "wiremesh", "besi"]),
+        ("Beton", ["beton", "concrete", "cor", "pengecoran", "grouting"]),
+        ("Struktur Baja", ["baja", "steel", "truss", "erection"]),
+        ("Pasangan Dinding", ["pasangan", "bata", "hebel", "aac", "masonry", "dinding"]),
+        ("Plester/Acian", ["plester", "aci", "plaster", "skim coat"]),
+        ("Lantai/Keramik", ["keramik", "ubin", "tile", "granite", "lantai"]),
+        ("Pengecatan/Finishing", ["cat", "pengecatan", "finishing", "coating", "sealant"]),
+        ("Atap", ["atap", "roof", "genteng", "spandek", "rangka atap"]),
+        ("Plumbing/Sanitary", ["plumbing", "sanitary", "pipa", "air bersih", "air kotor", "drainase"]),
+        ("Elektrikal", ["listrik", "elektrikal", "kabel", "panel", "lampu", "conduit", "grounding"]),
+        ("HVAC/MEP", ["hvac", "ducting", "ac", "mekanikal", "mep"]),
+        ("Kusen/Pintu/Jendela", ["kusen", "pintu", "jendela", "aluminium", "kaca"]),
+        ("Jalan/Perkerasan", ["jalan", "aspal", "perkerasan", "paving", "rigid pavement"])
+    ]
+
+    for work_type, keywords in keyword_groups:
+        if any(keyword in name for keyword in keywords):
+            return work_type
+
+    if mapped_name:
+        return str(mapped_name).strip()
+
+    return "Umum"
+
+
+def build_work_type_focus_action(work_type):
+    action_map = {
+        "Pondasi": "Pastikan titik/elevasi kerja, alat bor/pancang, tulangan, dan suplai beton siap sesuai urutan eksekusi.",
+        "Pekerjaan Tanah": "Kontrol kondisi tanah, akses alat angkut, dewatering, dan hasil pemadatan agar produktivitas tidak turun.",
+        "Bekisting": "Amankan shop drawing, siklus bongkar-pasang panel, ketersediaan material formwork, dan inspeksi alignment.",
+        "Pembesian": "Siapkan bending schedule, cutting list, area fabrikasi, dan stok tulangan agar pemasangan tidak tersendat.",
+        "Beton": "Kunci jadwal pengecoran, batching plant/pompa, vibrator cadangan, serta kontrol slump dan curing.",
+        "Struktur Baja": "Sinkronkan fabrikasi, delivery member, crane/lifting plan, dan kesiapan baut maupun sambungan.",
+        "Pasangan Dinding": "Jaga suplai material pasangan, ketelitian layout bukaan, dan ritme kerja antar zona.",
+        "Plester/Acian": "Pastikan area siap kerja, kondisi dasar dinding sesuai, dan rotasi tenaga menjaga mutu serta output.",
+        "Lantai/Keramik": "Amankan approval pola/potongan, leveling dasar, stok material, dan akses area bebas gangguan.",
+        "Pengecatan/Finishing": "Kontrol kesiapan permukaan, waktu pengeringan, mockup mutu, dan konsistensi material finishing.",
+        "Atap": "Pastikan area kerja aman, material atap lengkap, dan cuaca serta akses lifting terencana dengan baik.",
+        "Plumbing/Sanitary": "Koordinasikan shop drawing, jalur instalasi, prefabrikasi pipa, dan pressure test sebelum penutupan area.",
+        "Elektrikal": "Jaga kesiapan material kabel/panel, urutan instalasi tray-conduit, dan inspeksi pengujian bertahap.",
+        "HVAC/MEP": "Sinkronkan jalur ducting/mep dengan ruang kerja lain dan pastikan item long lead tersedia tepat waktu.",
+        "Kusen/Pintu/Jendela": "Pastikan ukuran lapangan final, material datang per zona, dan pemasangan terlindung dari rework finishing.",
+        "Jalan/Perkerasan": "Kontrol urutan hamparan, kesiapan alat, kepadatan/lapisan dasar, dan pasokan material harian.",
+        "Umum": "Pastikan keseimbangan tenaga, alat, material, dan akses kerja dijaga stabil sepanjang pelaksanaan."
+    }
+    return action_map.get(work_type, action_map["Umum"])
+
+
+def build_risk_recommendation_table(
+    df_risk,
+    schedule_metrics,
+    activity_work_type_map=None,
+    near_critical_tf=2.0
+):
+    columns = [
+        "Aktivitas",
+        "Jenis Pekerjaan",
+        "Kategori Risiko",
+        "Status Jadwal",
+        "Pemicu Dominan",
+        "Prioritas",
+        "Rekomendasi Teknis"
+    ]
+    if df_risk.empty:
+        return pd.DataFrame(columns=columns)
+
+    metrics_lookup = (
+        schedule_metrics["metrics_df"]
+        .set_index("Aktivitas")
+        .to_dict("index")
+    )
+    prob_threshold = float(df_risk["Prob_Threshold"].iloc[0])
+    impact_threshold = float(df_risk["Impact_Threshold"].iloc[0])
+    recommendation_rows = []
+
+    for _, row in df_risk.iterrows():
+        act = row["Aktivitas"]
+        prob = float(row["Prob"])
+        impact = float(row["Pengaruh"])
+        category = row["Kategori Risiko"]
+        metrics = metrics_lookup.get(act, {})
+        tf = float(metrics.get("TF", np.nan))
+        work_type = detect_work_type(act, activity_work_type_map=activity_work_type_map)
+        work_type_action = build_work_type_focus_action(work_type)
+
+        high_prob = prob >= prob_threshold
+        high_impact = impact >= impact_threshold
+
+        if np.isfinite(tf) and np.isclose(tf, 0.0, atol=1e-9):
+            schedule_status = "Kritis"
+        elif np.isfinite(tf) and tf <= near_critical_tf:
+            schedule_status = "Hampir Kritis"
+        else:
+            schedule_status = "Non-Kritis"
+
+        if high_prob and high_impact:
+            dominant_trigger = "Probabilitas & Impact Tinggi"
+        elif high_prob:
+            dominant_trigger = "Probabilitas Tinggi"
+        elif high_impact:
+            dominant_trigger = "Impact Tinggi"
+        else:
+            dominant_trigger = "Terkendali"
+
+        if category == "Tinggi":
+            if schedule_status == "Kritis":
+                priority = "Segera"
+                recommendation = (
+                    "Tambah cadangan tenaga/alat, pastikan material siap sebelum ES, "
+                    "kontrol produktivitas harian, dan siapkan skenario percepatan. "
+                    f"Fokus {work_type.lower()}: {work_type_action}"
+                )
+            else:
+                priority = "Tinggi"
+                recommendation = (
+                    "Kunci kesiapan predecessor, siapkan cadangan sumber daya, "
+                    "audit metode kerja, dan aktifkan recovery plan saat deviasi muncul. "
+                    f"Fokus {work_type.lower()}: {work_type_action}"
+                )
+        elif category == "Sedang":
+            if dominant_trigger == "Probabilitas Tinggi":
+                priority = "Menengah"
+                recommendation = (
+                    "Pantau output harian, stabilkan komposisi crew, "
+                    "dan cek kesiapan alat/material sebelum pekerjaan dimulai. "
+                    f"Fokus {work_type.lower()}: {work_type_action}"
+                )
+            elif dominant_trigger == "Impact Tinggi":
+                priority = "Menengah"
+                recommendation = (
+                    "Siapkan buffer alat/material, review urutan kerja dan akses area, "
+                    "serta percepat keputusan lapangan bila ada hambatan. "
+                    f"Fokus {work_type.lower()}: {work_type_action}"
+                )
+            else:
+                priority = "Menengah"
+                recommendation = (
+                    "Lakukan monitoring mingguan, validasi produktivitas aktual, "
+                    "dan koreksi deviasi kecil lebih awal. "
+                    f"Fokus {work_type.lower()}: {work_type_action}"
+                )
+        else:
+            priority = "Rutin"
+            recommendation = (
+                "Pertahankan metode kerja yang berjalan, monitor periodik, "
+                "dan jaga kontinuitas material, alat, serta tenaga inti. "
+                f"Fokus {work_type.lower()}: {work_type_action}"
+            )
+
+        recommendation_rows.append({
+            "Aktivitas": act,
+            "Jenis Pekerjaan": work_type,
+            "Kategori Risiko": category,
+            "Status Jadwal": schedule_status,
+            "Pemicu Dominan": dominant_trigger,
+            "Prioritas": priority,
+            "Rekomendasi Teknis": recommendation
+        })
+
+    return pd.DataFrame(recommendation_rows, columns=columns)
+
+
 def build_network_positions(df):
     df_activities = build_activity_table(df)
     df_relations = build_relation_table(df)
@@ -769,6 +1147,30 @@ def calculate_schedule_metrics(df, durasi, tol=1e-9):
     }
 
 
+def get_path_terminal_duration(path_label, schedule_metrics):
+    metrics_lookup = (
+        schedule_metrics["metrics_df"]
+        .set_index("Aktivitas")
+        .to_dict("index")
+    )
+    activities = [
+        act.strip()
+        for act in str(path_label).split("->")
+        if act.strip()
+    ]
+
+    if not activities:
+        return np.nan
+
+    end_act = activities[-1]
+    metrics = metrics_lookup.get(end_act)
+
+    if metrics is None:
+        return np.nan
+
+    return float(metrics["EF"])
+
+
 def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     df_activities = build_activity_table(df)
     df_relations = build_relation_table(df)
@@ -876,6 +1278,25 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         -endpoint_height / 2,
         endpoint_height / 2
     )
+    finish_merge_y = positions["__FINISH__"][1]
+    finish_port_x = node_bounds["__FINISH__"][0]
+
+    if finish_lane_acts:
+        rightmost_finish_node = max(node_bounds[act][1] for act in finish_lane_acts)
+        left_bound = rightmost_finish_node + 0.20
+        right_bound = finish_port_x - 0.24
+
+        if right_bound > left_bound:
+            finish_merge_x = left_bound + ((right_bound - left_bound) * 0.78)
+        else:
+            finish_merge_x = max(rightmost_finish_node + 0.12, finish_port_x - 0.16)
+
+        finish_merge_x = min(
+            max(finish_merge_x, rightmost_finish_node + 0.12),
+            finish_port_x - 0.08
+        )
+    else:
+        finish_merge_x = finish_port_x - 0.16
 
     def edge_points(start_act, end_act, relation):
         x1, y1 = positions[start_act]
@@ -984,6 +1405,67 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
             zorder=zorder
         )
         return mid_x, y1, y2
+
+    def draw_finish_merge_edges(acts, color, width, zorder):
+        if not acts:
+            return
+
+        branch_points = [
+            (act, node_bounds[act][1], positions[act][1])
+            for act in acts
+        ]
+
+        if len(branch_points) > 1:
+            y_values = [y for _, _, y in branch_points]
+            y_values.append(finish_merge_y)
+            ax.plot(
+                [finish_merge_x, finish_merge_x],
+                [min(y_values), max(y_values)],
+                color=color,
+                lw=width,
+                zorder=zorder
+            )
+
+        for act, start_x, start_y in branch_points:
+            ax.plot(
+                [start_x, finish_merge_x],
+                [start_y, start_y],
+                color=color,
+                lw=width,
+                zorder=zorder
+            )
+
+            lane_idx = incoming_lane_order.get("__FINISH__", {}).get(act, 0)
+            label_base_x = start_x + ((finish_merge_x - start_x) * 0.55)
+            label_base_y = start_y + (-0.18 if lane_idx % 2 == 0 else 0.18)
+            label_x, label_y = place_relation_label(label_base_x, label_base_y, "FS")
+
+            draw_text(
+                label_x,
+                label_y,
+                "FS",
+                ha="center",
+                va="center",
+                fontsize=8.3,
+                fontweight="semibold",
+                color="#666666",
+                bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9),
+                zorder=5
+            )
+
+        ax.annotate(
+            "",
+            xy=(finish_port_x, finish_merge_y),
+            xytext=(finish_merge_x, finish_merge_y),
+            arrowprops=dict(
+                arrowstyle="->",
+                color=color,
+                lw=width,
+                shrinkA=0,
+                shrinkB=0
+            ),
+            zorder=zorder
+        )
 
     def estimate_relation_label_half_width(label_text):
         return 0.12 + (0.05 * len(str(label_text)))
@@ -1143,27 +1625,7 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
             zorder=5
         )
 
-    for act in finish_acts:
-        start_point, end_point = edge_points(act, "__FINISH__", "FS")
-        draw_orthogonal_arrow(start_point, end_point, "#BDBDBD", 1.2, 0.8)
-        label_x, label_y = place_relation_label(
-            (start_point[0] + end_point[0]) / 2,
-            start_point[1] - 0.18,
-            "FS"
-        )
-        label_x, label_y = fine_tune_relation_label(label_x, label_y, "FS", act, "__FINISH__")
-        draw_text(
-            label_x,
-            label_y,
-            "FS",
-            ha="center",
-            va="center",
-            fontsize=8.3,
-            fontweight="semibold",
-            color="#666666",
-            bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9),
-            zorder=5
-        )
+    draw_finish_merge_edges(finish_lane_acts, "#BDBDBD", 1.2, 0.8)
 
     def draw_activity_node(act, x, y, edge_color, fill_color):
         patch = FancyBboxPatch(
@@ -1687,6 +2149,26 @@ distribution_name = st.sidebar.selectbox(
     ["Lognormal", "Normal"],
     index=0
 )
+use_auto_seed = st.sidebar.checkbox(
+    "Acak seed setiap klik simulasi",
+    value=True
+)
+
+configured_seed = None
+if use_auto_seed:
+    st.sidebar.caption(
+        "Setiap klik tombol 'Jalankan Simulasi' akan memakai seed acak baru."
+    )
+else:
+    configured_seed = int(
+        st.sidebar.number_input(
+            "Random Seed",
+            min_value=0,
+            value=42,
+            step=1
+        )
+    )
+
 dist_param = fit_distribution_params(df_prod, distribution_name)
 
 st.subheader("Histogram Produktivitas per Jenis Pekerjaan")
@@ -1769,6 +2251,7 @@ if st.button("Jalankan Simulasi"):
     results = []
     critical_count = {act: 0 for act in unique_activities}
     path_count = {}
+    path_duration_sum = {}
 
     progress = st.progress(0)
 
@@ -1780,6 +2263,12 @@ if st.button("Jalankan Simulasi"):
     deterministic_acts = {
         act for path in deterministic_paths for act in path
     }
+    simulation_seed = (
+        int(np.random.SeedSequence().generate_state(1)[0])
+        if use_auto_seed
+        else configured_seed
+    )
+    rng = np.random.default_rng(simulation_seed)
 
     for i in range(n_sim):
 
@@ -1789,7 +2278,7 @@ if st.button("Jalankan Simulasi"):
             act = row['Aktivitas']
             Q = row['Volume']
             n = row['Tenaga']
-            p = sample_productivity(act, dist_param, distribution_name)
+            p = sample_productivity(act, dist_param, distribution_name, rng)
             durasi[act] = Q / (n * p)
 
         total, critical_paths = pdm_cp(df_proj, durasi)
@@ -1801,6 +2290,7 @@ if st.button("Jalankan Simulasi"):
         for path in critical_paths:
             path_key = " -> ".join(path)
             path_count[path_key] = path_count.get(path_key, 0) + 1
+            path_duration_sum[path_key] = path_duration_sum.get(path_key, 0.0) + total
 
         results.append(total)
 
@@ -1811,6 +2301,10 @@ if st.button("Jalankan Simulasi"):
     std_duration = np.std(results)
 
     st.success("Simulasi selesai")
+    if use_auto_seed:
+        st.caption(f"Seed simulasi yang digunakan: {simulation_seed} (acak otomatis)")
+    else:
+        st.caption(f"Seed simulasi yang digunakan: {simulation_seed}")
 
     # =============================
     # SIMULASI MONTE CARLO
@@ -1918,10 +2412,24 @@ if st.button("Jalankan Simulasi"):
 
     df_path = pd.DataFrame({
         "Path": list(path_count.keys()),
+        "Rata-rata Durasi Proyek Saat Path Kritis": [
+            path_duration_sum[path] / path_count[path]
+            for path in path_count.keys()
+        ],
         "Prob": [v/n_sim for v in path_count.values()]
     }).sort_values(by="Prob", ascending=False)
 
-    render_table(df_path, formats={"Prob": "{:.3f}"})
+    st.caption(
+        "Kolom rata-rata durasi proyek dihitung dari rerata total durasi proyek "
+        "pada simulasi-simulasi ketika path tersebut menjadi lintasan kritis."
+    )
+    render_table(
+        df_path,
+        formats={
+            "Rata-rata Durasi Proyek Saat Path Kritis": "{:.3f}",
+            "Prob": "{:.3f}"
+        }
+    )
 
     df_cp = pd.DataFrame({
         "Aktivitas": list(critical_count.keys()),
@@ -1947,7 +2455,32 @@ if st.button("Jalankan Simulasi"):
         "Warna",
         ["Merah", "Biru", "Hijau", "Ungu", "Toska"][:len(df_network_legend)]
     )
-    render_table(df_network_legend, formats={"Prob": "{:.3f}"})
+    df_network_legend = df_network_legend.rename(columns={
+        "Rata-rata Durasi Proyek Saat Path Kritis": "Rata-rata Durasi Probabilistik"
+    })
+    df_network_legend.insert(
+        2,
+        "Durasi Path Deterministik",
+        df_network_legend["Path"].apply(
+            lambda path: get_path_terminal_duration(path, deterministic_schedule)
+        )
+    )
+    df_network_legend = df_network_legend[
+        ["Warna", "Path", "Durasi Path Deterministik", "Rata-rata Durasi Probabilistik", "Prob"]
+    ]
+    st.caption(
+        "Kolom durasi probabilistik berasal dari hasil Monte Carlo, sedangkan "
+        "durasi path deterministik mengikuti network diagram, yaitu EF aktivitas "
+        "terakhir pada jadwal deterministik."
+    )
+    render_table(
+        df_network_legend,
+        formats={
+            "Durasi Path Deterministik": "{:.3f}",
+            "Rata-rata Durasi Probabilistik": "{:.3f}",
+            "Prob": "{:.3f}"
+        }
+    )
     network_fig = plot_network_diagram(df_proj, df_path, deterministic_schedule)
     zoomable_network_fig = build_zoomable_network_figure(network_fig)
 
@@ -2093,3 +2626,19 @@ if st.button("Jalankan Simulasi"):
         key="download_peta_risiko"
     )
     plt.close(risk_map_fig)
+
+    st.subheader("Rekomendasi Teknis Mitigasi Risiko")
+    st.caption(
+        "Rekomendasi berikut dibangkitkan otomatis dari kategori risiko, "
+        "pemicu dominan (CI/impact), dan status jadwal deterministik."
+    )
+    st.caption(f"Sumber jenis pekerjaan: {activity_work_type_source}.")
+    df_risk_recommendation = build_risk_recommendation_table(
+        df_risk,
+        deterministic_schedule,
+        activity_work_type_map=activity_work_type_map
+    )
+    render_wrapped_table(
+        df_risk_recommendation,
+        wide_columns=["Rekomendasi Teknis"]
+    )
