@@ -1463,28 +1463,32 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
         x1, y1 = positions[start_act]
         x2, y2 = positions[end_act]
 
-        def finish_port_y():
-            lane_order = incoming_lane_order.get("__FINISH__", {})
-            lane_count = incoming_lane_count.get("__FINISH__", 1)
-            if end_act != "__FINISH__" or start_act not in lane_order or lane_count <= 1:
+        def incoming_port_y():
+            lane_order = incoming_lane_order.get(end_act, {})
+            lane_count = incoming_lane_count.get(end_act, 1)
+            if start_act not in lane_order or lane_count <= 1:
                 return y2
 
-            max_offset = min(endpoint_height * 0.28, 0.24)
+            if end_act == "__FINISH__":
+                max_offset = min(endpoint_height * 0.28, 0.24)
+            else:
+                max_offset = min(node_height * 0.32, 0.30)
+
             offsets = np.linspace(max_offset, -max_offset, lane_count)
             return y2 + float(offsets[lane_order[start_act]])
 
         pred_start = (x1 - node_width / 2, y1)
         pred_finish = (x1 + node_width / 2, y1)
-        succ_start = (x2 - node_width / 2, y2)
-        succ_finish = (x2 + node_width / 2, y2)
+        succ_port_y = incoming_port_y()
+        succ_start = (x2 - node_width / 2, succ_port_y)
+        succ_finish = (x2 + node_width / 2, succ_port_y)
 
         if start_act == "__START__":
             pred_start = (x1 + endpoint_width / 2, y1)
             pred_finish = (x1 + endpoint_width / 2, y1)
         if end_act == "__FINISH__":
-            finish_y = finish_port_y()
-            succ_start = (x2 - endpoint_width / 2, finish_y)
-            succ_finish = (x2 - endpoint_width / 2, finish_y)
+            succ_start = (x2 - endpoint_width / 2, succ_port_y)
+            succ_finish = (x2 - endpoint_width / 2, succ_port_y)
 
         if relation == "FS":
             return pred_finish, succ_start
@@ -1524,9 +1528,13 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
                 bend_x = min(max(bend_x, left_bound), right_bound)
                 return bend_x
 
+            node_entry_clearance = 0.34 + min(0.18 * max(lane_count - 1, 0), 0.24)
+
             if x2 >= x1:
                 left_bound = x1 + max(0.28, min(0.60, abs(x2 - x1) * 0.18))
-                right_bound = x2 - 0.22
+                right_bound = x2 - node_entry_clearance
+                if right_bound <= left_bound:
+                    right_bound = x2 - 0.22
                 if lane_count == 2:
                     lane_t = float(lane_order[start_act])
                 else:
@@ -1534,8 +1542,10 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
                 bend_x = left_bound + (right_bound - left_bound) * lane_t
                 bend_x = min(max(bend_x, left_bound), right_bound)
             else:
-                left_bound = x2 + 0.22
+                left_bound = x2 + node_entry_clearance
                 right_bound = x1 - max(0.28, min(0.60, abs(x2 - x1) * 0.18))
+                if left_bound >= right_bound:
+                    left_bound = x2 + 0.22
                 if lane_count == 2:
                     lane_t = float(lane_order[start_act])
                 else:
@@ -2265,6 +2275,113 @@ def build_durations_from_productivity(df, productivity_map):
 
     return durasi
 
+
+def build_ci_percentile_comparison_table(
+    df_ci_compare,
+    results,
+    critical_flags,
+    percentiles=None,
+    tol=1e-9
+):
+    percentiles = percentiles or list(range(0, 101, 10))
+    base_columns = ["Aktivitas", "Deterministik"]
+    if "Probabilistik (Global)" in df_ci_compare.columns:
+        base_columns.append("Probabilistik (Global)")
+
+    df_percentile = df_ci_compare[base_columns].copy()
+    results_array = np.asarray(results, dtype=float)
+
+    if results_array.size == 0 or not critical_flags:
+        for percentile in percentiles:
+            df_percentile[f"CI(<=P{percentile})"] = np.nan
+        return df_percentile
+
+    for percentile in percentiles:
+        threshold = float(np.percentile(results_array, percentile))
+        mask = results_array <= (threshold + tol)
+        column_name = f"CI(<=P{percentile})"
+
+        if not np.any(mask):
+            df_percentile[column_name] = 0.0
+            continue
+
+        df_percentile[column_name] = [
+            float(
+                np.mean(
+                    np.asarray(
+                        critical_flags.get(act, np.zeros_like(results_array)),
+                        dtype=float
+                    )[mask]
+                )
+            )
+            for act in df_percentile["Aktivitas"]
+        ]
+
+    return df_percentile
+
+
+def build_critical_count_percentile_table(
+    critical_count,
+    results,
+    critical_flags,
+    percentiles=None,
+    tol=1e-9
+):
+    percentiles = percentiles or list(range(0, 101, 10))
+    results_array = np.asarray(results, dtype=float)
+    activities = list(critical_count.keys())
+    total_simulations = results_array.size
+
+    table_data = {
+        "Aktivitas": activities,
+        "Critical Count (Global)": [
+            int(critical_count.get(act, 0))
+            for act in activities
+        ],
+        "CI (Global)": [
+            float(critical_count.get(act, 0)) / total_simulations
+            if total_simulations > 0 else np.nan
+            for act in activities
+        ]
+    }
+
+    if total_simulations == 0 or not critical_flags:
+        for percentile in percentiles:
+            table_data[f"Critical Count (<=P{percentile})"] = np.nan
+            table_data[f"CI (<=P{percentile})"] = np.nan
+        return pd.DataFrame(table_data)
+
+    for percentile in percentiles:
+        threshold = float(np.percentile(results_array, percentile))
+        mask = results_array <= (threshold + tol)
+        subset_size = int(np.sum(mask))
+        count_column_name = f"Critical Count (<=P{percentile})"
+        ci_column_name = f"CI (<=P{percentile})"
+
+        if subset_size <= 0:
+            table_data[count_column_name] = [0] * len(activities)
+            table_data[ci_column_name] = [0.0] * len(activities)
+            continue
+
+        counts = [
+            int(
+                np.sum(
+                    np.asarray(
+                        critical_flags.get(act, np.zeros_like(results_array)),
+                        dtype=float
+                    )[mask]
+                )
+            )
+            for act in activities
+        ]
+        table_data[count_column_name] = counts
+        table_data[ci_column_name] = [
+            float(count_value) / subset_size
+            for count_value in counts
+        ]
+
+    return pd.DataFrame(table_data)
+
 # =============================
 # PARAMETER
 # =============================
@@ -2386,6 +2503,7 @@ if run_simulation or stored_simulation_matches_file:
         results = []
         activity_duration_sum = {act: 0.0 for act in unique_activities}
         critical_count = {act: 0 for act in unique_activities}
+        critical_flags = {act: [] for act in unique_activities}
         path_count = {}
         path_duration_sum = {}
 
@@ -2425,6 +2543,8 @@ if run_simulation or stored_simulation_matches_file:
             critical_acts = {act for path in critical_paths for act in path}
             for act in critical_acts:
                 critical_count[act] += 1
+            for act in unique_activities:
+                critical_flags[act].append(1 if act in critical_acts else 0)
 
             for path in critical_paths:
                 path_key = " -> ".join(path)
@@ -2452,6 +2572,7 @@ if run_simulation or stored_simulation_matches_file:
             "std_duration": float(std_duration),
             "probabilistic_activity_durations": dict(probabilistic_activity_durations),
             "critical_count": dict(critical_count),
+            "critical_flags": {act: list(flags) for act, flags in critical_flags.items()},
             "path_count": dict(path_count),
             "path_duration_sum": dict(path_duration_sum),
             "deterministic_total": float(deterministic_total),
@@ -2471,6 +2592,7 @@ if run_simulation or stored_simulation_matches_file:
         std_duration = float(simulation_payload["std_duration"])
         probabilistic_activity_durations = dict(simulation_payload["probabilistic_activity_durations"])
         critical_count = dict(simulation_payload["critical_count"])
+        critical_flags = simulation_payload.get("critical_flags")
         path_count = dict(simulation_payload["path_count"])
         path_duration_sum = dict(simulation_payload["path_duration_sum"])
         deterministic_total = float(simulation_payload["deterministic_total"])
@@ -2497,9 +2619,45 @@ if run_simulation or stored_simulation_matches_file:
     st.subheader("Hasil Simulasi Durasi Pekerjaan Metode Monte Carlo")
     df_results = pd.DataFrame({"Durasi": results})
     with st.expander("Lihat Data Hasil Simulasi Monte Carlo"):
+        st.write("Tabel Durasi Hasil Simulasi:")
         render_table(
             df_results,
             formats={"Durasi": "{:.3f}"},
+            show_index=True,
+            start_index_at_one=True
+        )
+
+        df_critical_count_table = build_critical_count_percentile_table(
+            critical_count,
+            results,
+            critical_flags
+        ).sort_values(
+            by=["Critical Count (Global)", "Aktivitas"],
+            ascending=[False, True]
+        ).reset_index(drop=True)
+
+        st.write("Tabel Rekap Critical Count per Aktivitas:")
+        st.caption(
+            "Kolom 'Critical Count (<=Pk)' menunjukkan jumlah simulasi saat aktivitas "
+            "menjadi kritis pada subset durasi proyek kurang dari atau sama dengan "
+            "batas persentil ke-k. Kolom 'CI (<=Pk)' adalah proporsinya di dalam "
+            "subset persentil tersebut."
+        )
+        critical_count_formats = {
+            "Critical Count (Global)": "{:.0f}",
+            "CI (Global)": "{:.3f}"
+        }
+        critical_count_formats.update({
+            f"Critical Count (<=P{percentile})": "{:.0f}"
+            for percentile in range(0, 101, 10)
+        })
+        critical_count_formats.update({
+            f"CI (<=P{percentile})": "{:.3f}"
+            for percentile in range(0, 101, 10)
+        })
+        render_table(
+            df_critical_count_table,
+            formats=critical_count_formats,
             show_index=True,
             start_index_at_one=True
         )
@@ -2514,25 +2672,6 @@ if run_simulation or stored_simulation_matches_file:
         ]
     })
     render_table(df_resume_mc, formats={"Nilai": "{:.3f}"})
-
-    # =============================
-    # STATISTIK DURASI PROBABILISTIK
-    # =============================
-    st.subheader("Analisis Probabilistik Durasi per Jenis Pekerjaan")
-    df_stats = pd.DataFrame({
-        "Statistik": ["Mean", "Std", "P50", "P60", "P70", "P80", "P90", "P100"],
-        "Nilai": [
-            mean_duration,
-            std_duration,
-            np.percentile(results, 50),
-            np.percentile(results, 60),
-            np.percentile(results, 70),
-            np.percentile(results, 80),
-            np.percentile(results, 90),
-            np.percentile(results, 100)
-        ]
-    })
-    render_table(df_stats, formats={"Nilai": "{:.3f}"})
 
     # =============================
     # HISTOGRAM
@@ -2591,6 +2730,19 @@ if run_simulation or stored_simulation_matches_file:
     plt.close(fig)
 
     # =============================
+    # STATISTIK DURASI PROBABILISTIK
+    # =============================
+    st.subheader("Analisis Probabilistik Durasi per Jenis Pekerjaan")
+    percentile_points = list(range(0, 101, 10))
+    df_stats = pd.DataFrame({
+        "Statistik": ["Mean", "Std"] + [f"P{p}" for p in percentile_points],
+        "Nilai": [mean_duration, std_duration] + [
+            np.percentile(results, p) for p in percentile_points
+        ]
+    })
+    render_table(df_stats, formats={"Nilai": "{:.3f}"})
+
+    # =============================
     # PROBABILISTIC CRITICAL PATH
     # =============================
     st.subheader("Analisis Probabilistic Lintasan Kritis")
@@ -2629,17 +2781,14 @@ if run_simulation or stored_simulation_matches_file:
     # =============================
     st.subheader("Network Diagram Analisis Probabilistik")
     percentile_options = {
-        "P50": 50,
-        "P60": 60,
-        "P70": 70,
-        "P80": 80,
-        "P90": 90,
-        "P100": 100
+        f"P{percentile}": percentile
+        for percentile in range(0, 101, 10)
     }
+    percentile_labels = list(percentile_options.keys())
     selected_percentile_label = st.selectbox(
         "Pilih basis durasi proyek untuk network diagram",
-        list(percentile_options.keys()),
-        index=0,
+        percentile_labels,
+        index=percentile_labels.index("P50"),
         key=f"network_diagram_percentile_{current_file_signature}"
     )
     selected_percentile = percentile_options[selected_percentile_label]
@@ -2752,10 +2901,10 @@ if run_simulation or stored_simulation_matches_file:
     })
 
     df_ci_compare = df_det_ci.merge(df_cp, on="Aktivitas", how="left")
-    df_ci_compare = df_ci_compare.rename(columns={"Prob": "Probabilistik"})
-    df_ci_compare["Probabilistik"] = df_ci_compare["Probabilistik"].fillna(0.0)
+    df_ci_compare = df_ci_compare.rename(columns={"Prob": "Probabilistik (Global)"})
+    df_ci_compare["Probabilistik (Global)"] = df_ci_compare["Probabilistik (Global)"].fillna(0.0)
     df_ci_compare = df_ci_compare.sort_values(
-        by=["Deterministik", "Probabilistik", "Aktivitas"],
+        by=["Deterministik", "Probabilistik (Global)", "Aktivitas"],
         ascending=[False, False, True]
     )
 
@@ -2764,19 +2913,77 @@ if run_simulation or stored_simulation_matches_file:
         df_ci_compare,
         formats={
             "Deterministik": "{:.3f}",
-            "Probabilistik": "{:.3f}"
+            "Probabilistik (Global)": "{:.3f}"
         }
     )
+    with st.expander("Lihat tabel Perbandingan CI kumulatif sampai P0 s.d. P100"):
+        if critical_flags:
+            df_ci_percentile_compare = build_ci_percentile_comparison_table(
+                df_ci_compare,
+                results,
+                critical_flags
+            )
+            st.caption(
+                "'Probabilistik (Global)' dihitung dari seluruh simulasi. "
+                "Kolom 'CI(<=Pk)' dihitung dari subset simulasi dengan durasi proyek "
+                "kurang dari atau sama dengan batas persentil ke-k, sehingga nilainya "
+                "memang bisa berbeda dari kolom global."
+            )
+            st.caption(
+                "Contoh: jika 'Probabilistik (Global)' = 0.994 tetapi 'CI(<=P20)' = 0.990, "
+                "artinya pada kelompok 20% simulasi tercepat aktivitas tersebut sedikit "
+                "lebih jarang menjadi kritis dibandingkan seluruh simulasi."
+            )
+            percentile_formats = {
+                "Deterministik": "{:.3f}",
+                "Probabilistik (Global)": "{:.3f}"
+            }
+            percentile_formats.update({
+                f"CI(<=P{percentile})": "{:.3f}"
+                for percentile in range(0, 101, 10)
+            })
+            render_table(
+                df_ci_percentile_compare,
+                formats=percentile_formats
+            )
+        else:
+            st.info(
+                "Data CI per persentil belum tersedia pada hasil simulasi yang sedang ditampilkan. "
+                "Klik 'Jalankan Simulasi' sekali lagi untuk membangkitkan tabel CI kumulatif per persentil."
+            )
 
     # ==============================
     # ANALISIS SENSITIVITAS (TORNADO)
     # ==============================
     st.subheader("Analisis Sensitivitas per Jenis Pekerjaan")
 
+    activity_input_lookup = (
+        df_proj_unique
+        .set_index("Aktivitas")[["Volume", "Tenaga"]]
+        .to_dict("index")
+    )
     sens = {}
+    sensitivity_rows = []
 
     for act in unique_activities:
-        vals = []
+        scenario_totals = {}
+        activity_inputs = activity_input_lookup.get(act, {})
+        act_volume = activity_inputs.get("Volume", np.nan)
+        act_tenaga = activity_inputs.get("Tenaga", np.nan)
+        mean_p_act = mean_p_map.get(act, np.nan)
+        p_low = mean_p_act * 0.8 if pd.notna(mean_p_act) else np.nan
+        p_high = mean_p_act * 1.2 if pd.notna(mean_p_act) else np.nan
+
+        if (
+            pd.notna(act_volume) and pd.notna(act_tenaga) and
+            pd.notna(p_low) and p_low > 0 and
+            pd.notna(p_high) and p_high > 0
+        ):
+            durasi_act_low = act_volume / (act_tenaga * p_low)
+            durasi_act_high = act_volume / (act_tenaga * p_high)
+        else:
+            durasi_act_low = np.nan
+            durasi_act_high = np.nan
 
         for f in [0.8, 1.2]:
             durasi = {}
@@ -2785,17 +2992,35 @@ if run_simulation or stored_simulation_matches_file:
                 a = row['Aktivitas']
                 Q = row['Volume']
                 n = row['Tenaga']
+                mean_p = mean_p_map.get(a)
 
-                mean_p = df_prod[df_prod['Aktivitas']==a]['p'].mean()
+                if pd.isna(mean_p) or mean_p is None or mean_p <= 0:
+                    raise ValueError(
+                        f"Produktivitas rata-rata untuk aktivitas '{a}' tidak valid."
+                    )
 
                 p = mean_p * f if a == act else mean_p
 
                 durasi[a] = Q / (n * p)
 
             total, _ = pdm_cp(df_proj, durasi)
-            vals.append(total)
+            scenario_totals[f] = total
 
-        sens[act] = abs(vals[1] - vals[0])
+        pengaruh = abs(scenario_totals[1.2] - scenario_totals[0.8])
+        sens[act] = pengaruh
+        sensitivity_rows.append({
+            "Aktivitas": act,
+            "Volume": act_volume,
+            "Tenaga": act_tenaga,
+            "Mean p": mean_p_act,
+            "p(-20%)": p_low,
+            "p(+20%)": p_high,
+            "Durasi Aktivitas saat p(-20%)": durasi_act_low,
+            "Durasi Aktivitas saat p(+20%)": durasi_act_high,
+            "Durasi Proyek saat p(-20%)": scenario_totals[0.8],
+            "Durasi Proyek saat p(+20%)": scenario_totals[1.2],
+            "Pengaruh": pengaruh
+        })
 
     df_s = pd.DataFrame({
         "Aktivitas": list(sens.keys()),
@@ -2803,9 +3028,28 @@ if run_simulation or stored_simulation_matches_file:
     }).sort_values(by="Pengaruh")
 
     st.write("Tabel Hasil Sensitivitas per Jenis Pekerjaan:")
-    df_s_table = df_s.sort_values(by="Pengaruh", ascending=False).reset_index(drop=True)
+    st.caption("Keterangan: 1 hari kerja = 4 jam efektif.")
+    df_s_table = (
+        pd.DataFrame(sensitivity_rows)
+        .sort_values(by="Pengaruh", ascending=False)
+        .reset_index(drop=True)
+    )
     df_s_table.insert(0, "Rank", range(1, len(df_s_table) + 1))
-    render_table(df_s_table, formats={"Pengaruh": "{:.3f}"})
+    render_table(
+        df_s_table,
+        formats={
+            "Volume": "{:.3f}",
+            "Tenaga": "{:.3f}",
+            "Mean p": "{:.3f}",
+            "p(-20%)": "{:.3f}",
+            "p(+20%)": "{:.3f}",
+            "Durasi Aktivitas saat p(-20%)": "{:.3f}",
+            "Durasi Aktivitas saat p(+20%)": "{:.3f}",
+            "Durasi Proyek saat p(-20%)": "{:.3f}",
+            "Durasi Proyek saat p(+20%)": "{:.3f}",
+            "Pengaruh": "{:.3f}"
+        }
+    )
 
     fig2, ax2 = plt.subplots()
     ax2.barh(df_s["Aktivitas"], df_s["Pengaruh"], edgecolor="black", linewidth=1, color="#4C78A8")
