@@ -7,6 +7,7 @@ from scipy.stats import lognorm, norm
 from matplotlib.lines import Line2D
 from matplotlib.patches import FancyBboxPatch
 import time
+import hashlib
 from io import BytesIO
 from html import escape
 
@@ -274,6 +275,7 @@ if file is None:
     st.stop()
 
 excel_book = pd.ExcelFile(BytesIO(file.getvalue()))
+current_file_signature = hashlib.md5(file.getvalue()).hexdigest()
 
 # =============================
 # LOAD DATA
@@ -1171,6 +1173,165 @@ def get_path_terminal_duration(path_label, schedule_metrics):
     return float(metrics["EF"])
 
 
+def build_path_conditioned_activity_durations(
+    path_label,
+    path_count,
+    path_activity_duration_sum,
+    fallback_durations
+):
+    if path_label not in path_activity_duration_sum or path_count.get(path_label, 0) <= 0:
+        return dict(fallback_durations)
+
+    count = path_count[path_label]
+    conditioned_sum = path_activity_duration_sum[path_label]
+
+    return {
+        act: conditioned_sum.get(act, fallback_durations.get(act, 0.0)) / count
+        for act in fallback_durations.keys()
+    }
+
+
+def scale_durations_to_target_path_duration(
+    df,
+    path_label,
+    base_durations,
+    target_duration,
+    tol=1e-6,
+    max_iter=60
+):
+    def build_scaled_durations(factor):
+        return {
+            act: max(float(duration) * factor, 0.0)
+            for act, duration in base_durations.items()
+        }
+
+    def compute_path_duration(factor):
+        schedule = calculate_schedule_metrics(df, build_scaled_durations(factor))
+        return get_path_terminal_duration(path_label, schedule), schedule
+
+    if not np.isfinite(target_duration) or target_duration <= 0:
+        return calculate_schedule_metrics(df, base_durations)
+
+    try:
+        current_duration, current_schedule = compute_path_duration(1.0)
+    except Exception:
+        return calculate_schedule_metrics(df, base_durations)
+
+    if not np.isfinite(current_duration) or current_duration <= 0:
+        return current_schedule
+
+    if abs(current_duration - target_duration) <= tol:
+        return current_schedule
+
+    low_factor = 0.0
+    high_factor = 1.0
+
+    try:
+        low_duration, _ = compute_path_duration(low_factor)
+    except Exception:
+        low_duration = np.nan
+
+    if current_duration < target_duration:
+        high_duration = current_duration
+        while high_duration < target_duration and high_factor < 1e6:
+            low_factor = high_factor
+            high_factor *= 2.0
+            high_duration, _ = compute_path_duration(high_factor)
+    else:
+        if np.isfinite(low_duration) and low_duration > target_duration:
+            return current_schedule
+
+    best_schedule = current_schedule
+
+    for _ in range(max_iter):
+        mid_factor = (low_factor + high_factor) / 2.0
+        mid_duration, mid_schedule = compute_path_duration(mid_factor)
+        best_schedule = mid_schedule
+
+        if not np.isfinite(mid_duration):
+            break
+
+        if abs(mid_duration - target_duration) <= tol:
+            return mid_schedule
+
+        if mid_duration < target_duration:
+            low_factor = mid_factor
+        else:
+            high_factor = mid_factor
+
+    return best_schedule
+
+
+def scale_durations_to_target_project_duration(
+    df,
+    base_durations,
+    target_duration,
+    tol=1e-6,
+    max_iter=60
+):
+    def build_scaled_durations(factor):
+        return {
+            act: max(float(duration) * factor, 0.0)
+            for act, duration in base_durations.items()
+        }
+
+    def compute_project_duration(factor):
+        schedule = calculate_schedule_metrics(df, build_scaled_durations(factor))
+        return float(schedule["project_duration"]), schedule
+
+    if not np.isfinite(target_duration) or target_duration <= 0:
+        return calculate_schedule_metrics(df, base_durations)
+
+    try:
+        current_duration, current_schedule = compute_project_duration(1.0)
+    except Exception:
+        return calculate_schedule_metrics(df, base_durations)
+
+    if not np.isfinite(current_duration) or current_duration <= 0:
+        return current_schedule
+
+    if abs(current_duration - target_duration) <= tol:
+        return current_schedule
+
+    low_factor = 0.0
+    high_factor = 1.0
+
+    try:
+        low_duration, _ = compute_project_duration(low_factor)
+    except Exception:
+        low_duration = np.nan
+
+    if current_duration < target_duration:
+        high_duration = current_duration
+        while high_duration < target_duration and high_factor < 1e6:
+            low_factor = high_factor
+            high_factor *= 2.0
+            high_duration, _ = compute_project_duration(high_factor)
+    else:
+        if np.isfinite(low_duration) and low_duration > target_duration:
+            return current_schedule
+
+    best_schedule = current_schedule
+
+    for _ in range(max_iter):
+        mid_factor = (low_factor + high_factor) / 2.0
+        mid_duration, mid_schedule = compute_project_duration(mid_factor)
+        best_schedule = mid_schedule
+
+        if not np.isfinite(mid_duration):
+            break
+
+        if abs(mid_duration - target_duration) <= tol:
+            return mid_schedule
+
+        if mid_duration < target_duration:
+            low_factor = mid_factor
+        else:
+            high_factor = mid_factor
+
+    return best_schedule
+
+
 def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     df_activities = build_activity_table(df)
     df_relations = build_relation_table(df)
@@ -1435,24 +1596,6 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
                 zorder=zorder
             )
 
-            lane_idx = incoming_lane_order.get("__FINISH__", {}).get(act, 0)
-            label_base_x = start_x + ((finish_merge_x - start_x) * 0.55)
-            label_base_y = start_y + (-0.18 if lane_idx % 2 == 0 else 0.18)
-            label_x, label_y = place_relation_label(label_base_x, label_base_y, "FS")
-
-            draw_text(
-                label_x,
-                label_y,
-                "FS",
-                ha="center",
-                va="center",
-                fontsize=8.3,
-                fontweight="semibold",
-                color="#666666",
-                bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9),
-                zorder=5
-            )
-
         ax.annotate(
             "",
             xy=(finish_port_x, finish_merge_y),
@@ -1607,23 +1750,6 @@ def plot_network_diagram(df, df_path, schedule_metrics, max_paths=5):
     for act in start_acts:
         start_point, end_point = edge_points("__START__", act, "FS")
         draw_orthogonal_arrow(start_point, end_point, "#BDBDBD", 1.2, 0.8)
-        label_x, label_y = place_relation_label(
-            (start_point[0] + end_point[0]) / 2,
-            start_point[1] - 0.18,
-            "FS"
-        )
-        draw_text(
-            label_x,
-            label_y,
-            "FS",
-            ha="center",
-            va="center",
-            fontsize=8.3,
-            fontweight="semibold",
-            color="#666666",
-            bbox=dict(boxstyle="round,pad=0.15", facecolor="white", edgecolor="none", alpha=0.9),
-            zorder=5
-        )
 
     draw_finish_merge_edges(finish_lane_acts, "#BDBDBD", 1.2, 0.8)
 
@@ -2244,64 +2370,123 @@ else:
 # =============================
 # RUN
 # =============================
-if st.button("Jalankan Simulasi"):
-    df_proj_unique = build_activity_table(df_proj)
-    unique_activities = df_proj_unique["Aktivitas"].tolist()
+SIMULATION_STATE_KEY = "smc_simulation_results"
+run_simulation = st.button("Jalankan Simulasi")
+stored_simulation = st.session_state.get(SIMULATION_STATE_KEY)
+stored_simulation_matches_file = (
+    stored_simulation is not None and
+    stored_simulation.get("file_signature") == current_file_signature
+)
 
-    results = []
-    critical_count = {act: 0 for act in unique_activities}
-    path_count = {}
-    path_duration_sum = {}
+if run_simulation or stored_simulation_matches_file:
+    if run_simulation:
+        df_proj_unique = build_activity_table(df_proj)
+        unique_activities = df_proj_unique["Aktivitas"].tolist()
 
-    progress = st.progress(0)
+        results = []
+        activity_duration_sum = {act: 0.0 for act in unique_activities}
+        critical_count = {act: 0 for act in unique_activities}
+        path_count = {}
+        path_duration_sum = {}
 
-    start = time.time()
+        progress = st.progress(0)
 
-    deterministic_durations = build_durations_from_productivity(df_proj, mean_p_map)
-    deterministic_schedule = calculate_schedule_metrics(df_proj, deterministic_durations)
-    deterministic_total, deterministic_paths = pdm_cp(df_proj, deterministic_durations)
-    deterministic_acts = {
-        act for path in deterministic_paths for act in path
-    }
-    simulation_seed = (
-        int(np.random.SeedSequence().generate_state(1)[0])
-        if use_auto_seed
-        else configured_seed
-    )
-    rng = np.random.default_rng(simulation_seed)
+        start = time.time()
 
-    for i in range(n_sim):
+        deterministic_durations = build_durations_from_productivity(df_proj, mean_p_map)
+        deterministic_schedule = calculate_schedule_metrics(df_proj, deterministic_durations)
+        deterministic_total, deterministic_paths = pdm_cp(df_proj, deterministic_durations)
+        deterministic_acts = {
+            act for path in deterministic_paths for act in path
+        }
+        simulation_seed = (
+            int(np.random.SeedSequence().generate_state(1)[0])
+            if use_auto_seed
+            else configured_seed
+        )
+        rng = np.random.default_rng(simulation_seed)
 
-        durasi = {}
+        for i in range(n_sim):
 
-        for _, row in df_proj_unique.iterrows():
-            act = row['Aktivitas']
-            Q = row['Volume']
-            n = row['Tenaga']
-            p = sample_productivity(act, dist_param, distribution_name, rng)
-            durasi[act] = Q / (n * p)
+            durasi = {}
 
-        total, critical_paths = pdm_cp(df_proj, durasi)
+            for _, row in df_proj_unique.iterrows():
+                act = row['Aktivitas']
+                Q = row['Volume']
+                n = row['Tenaga']
+                p = sample_productivity(act, dist_param, distribution_name, rng)
+                durasi[act] = Q / (n * p)
 
-        critical_acts = {act for path in critical_paths for act in path}
-        for act in critical_acts:
-            critical_count[act] += 1
+            total, critical_paths = pdm_cp(df_proj, durasi)
 
-        for path in critical_paths:
-            path_key = " -> ".join(path)
-            path_count[path_key] = path_count.get(path_key, 0) + 1
-            path_duration_sum[path_key] = path_duration_sum.get(path_key, 0.0) + total
+            for act, duration_value in durasi.items():
+                activity_duration_sum[act] += duration_value
 
-        results.append(total)
+            critical_acts = {act for path in critical_paths for act in path}
+            for act in critical_acts:
+                critical_count[act] += 1
 
-        progress.progress((i+1)/n_sim)
+            for path in critical_paths:
+                path_key = " -> ".join(path)
+                path_count[path_key] = path_count.get(path_key, 0) + 1
+                path_duration_sum[path_key] = path_duration_sum.get(path_key, 0.0) + total
 
-    results = np.array(results)
-    mean_duration = np.mean(results)
-    std_duration = np.std(results)
+            results.append(total)
 
-    st.success("Simulasi selesai")
-    if use_auto_seed:
+            progress.progress((i+1)/n_sim)
+
+        results = np.array(results)
+        mean_duration = np.mean(results)
+        std_duration = np.std(results)
+        probabilistic_activity_durations = {
+            act: activity_duration_sum[act] / n_sim
+            for act in unique_activities
+        }
+        simulation_n_sim = n_sim
+        simulation_seed_was_auto = use_auto_seed
+
+        st.session_state[SIMULATION_STATE_KEY] = {
+            "file_signature": current_file_signature,
+            "results": results.copy(),
+            "mean_duration": float(mean_duration),
+            "std_duration": float(std_duration),
+            "probabilistic_activity_durations": dict(probabilistic_activity_durations),
+            "critical_count": dict(critical_count),
+            "path_count": dict(path_count),
+            "path_duration_sum": dict(path_duration_sum),
+            "deterministic_total": float(deterministic_total),
+            "deterministic_paths": [list(path) for path in deterministic_paths],
+            "deterministic_acts": sorted(deterministic_acts),
+            "deterministic_schedule": deterministic_schedule,
+            "simulation_seed": int(simulation_seed),
+            "simulation_seed_was_auto": bool(simulation_seed_was_auto),
+            "simulation_n_sim": int(simulation_n_sim)
+        }
+    else:
+        df_proj_unique = build_activity_table(df_proj)
+        unique_activities = df_proj_unique["Aktivitas"].tolist()
+        simulation_payload = stored_simulation
+        results = np.array(simulation_payload["results"], dtype=float)
+        mean_duration = float(simulation_payload["mean_duration"])
+        std_duration = float(simulation_payload["std_duration"])
+        probabilistic_activity_durations = dict(simulation_payload["probabilistic_activity_durations"])
+        critical_count = dict(simulation_payload["critical_count"])
+        path_count = dict(simulation_payload["path_count"])
+        path_duration_sum = dict(simulation_payload["path_duration_sum"])
+        deterministic_total = float(simulation_payload["deterministic_total"])
+        deterministic_paths = [list(path) for path in simulation_payload["deterministic_paths"]]
+        deterministic_acts = set(simulation_payload["deterministic_acts"])
+        deterministic_schedule = simulation_payload["deterministic_schedule"]
+        simulation_seed = int(simulation_payload["simulation_seed"])
+        simulation_seed_was_auto = bool(simulation_payload["simulation_seed_was_auto"])
+        simulation_n_sim = int(simulation_payload["simulation_n_sim"])
+
+    if run_simulation:
+        st.success("Simulasi selesai")
+    else:
+        st.caption("Menampilkan hasil simulasi terakhir untuk dataset ini.")
+
+    if simulation_seed_was_auto:
         st.caption(f"Seed simulasi yang digunakan: {simulation_seed} (acak otomatis)")
     else:
         st.caption(f"Seed simulasi yang digunakan: {simulation_seed}")
@@ -2416,7 +2601,7 @@ if st.button("Jalankan Simulasi"):
             path_duration_sum[path] / path_count[path]
             for path in path_count.keys()
         ],
-        "Prob": [v/n_sim for v in path_count.values()]
+        "Prob": [v/simulation_n_sim for v in path_count.values()]
     }).sort_values(by="Prob", ascending=False)
 
     st.caption(
@@ -2433,7 +2618,7 @@ if st.button("Jalankan Simulasi"):
 
     df_cp = pd.DataFrame({
         "Aktivitas": list(critical_count.keys()),
-        "Prob": [v/n_sim for v in critical_count.values()]
+        "Prob": [v/simulation_n_sim for v in critical_count.values()]
     }).sort_values(by="Prob", ascending=False)
 
     st.subheader("Criticality Index (CI)")
@@ -2443,21 +2628,45 @@ if st.button("Jalankan Simulasi"):
     # NETWORK DIAGRAM
     # =============================
     st.subheader("Network Diagram Analisis Probabilistik")
+    percentile_options = {
+        "P50": 50,
+        "P60": 60,
+        "P70": 70,
+        "P80": 80,
+        "P90": 90,
+        "P100": 100
+    }
+    selected_percentile_label = st.selectbox(
+        "Pilih basis durasi proyek untuk network diagram",
+        list(percentile_options.keys()),
+        index=0,
+        key=f"network_diagram_percentile_{current_file_signature}"
+    )
+    selected_percentile = percentile_options[selected_percentile_label]
+    selected_percentile_duration = float(np.percentile(results, selected_percentile))
+    network_schedule = scale_durations_to_target_project_duration(
+        df_proj,
+        probabilistic_activity_durations,
+        selected_percentile_duration
+    )
+    network_project_duration = float(network_schedule["project_duration"])
+
     st.caption(
         "Lintasan kritis dengan probabilitas tertinggi diberi warna merah. "
         "Lintasan kritis berikutnya diberi warna berbeda berdasarkan urutan probabilitas. "
-        "Nilai ES, EF, LS, LF, d, dan TF pada node dihitung dari jadwal deterministik berbasis mean productivity."
+        f"Node pada network diagram dibangun dari rerata durasi aktivitas hasil simulasi Monte Carlo, "
+        f"lalu total durasi diagram diselaraskan ke target durasi proyek {selected_percentile_label} "
+        f"= {selected_percentile_duration:.3f}. Durasi proyek pada diagram yang terbentuk = "
+        f"{network_project_duration:.3f}."
     )
 
     df_network_legend = df_path.head(5).reset_index(drop=True).copy()
+    diagram_duration_column = f"Durasi Path pada Diagram ({selected_percentile_label})"
     df_network_legend.insert(
         0,
         "Warna",
         ["Merah", "Biru", "Hijau", "Ungu", "Toska"][:len(df_network_legend)]
     )
-    df_network_legend = df_network_legend.rename(columns={
-        "Rata-rata Durasi Proyek Saat Path Kritis": "Rata-rata Durasi Probabilistik"
-    })
     df_network_legend.insert(
         2,
         "Durasi Path Deterministik",
@@ -2465,23 +2674,38 @@ if st.button("Jalankan Simulasi"):
             lambda path: get_path_terminal_duration(path, deterministic_schedule)
         )
     )
+    df_network_legend.insert(
+        3,
+        diagram_duration_column,
+        df_network_legend["Path"].apply(
+            lambda path: get_path_terminal_duration(path, network_schedule)
+        )
+    )
     df_network_legend = df_network_legend[
-        ["Warna", "Path", "Durasi Path Deterministik", "Rata-rata Durasi Probabilistik", "Prob"]
+        [
+            "Warna",
+            "Path",
+            "Durasi Path Deterministik",
+            diagram_duration_column,
+            "Prob"
+        ]
     ]
     st.caption(
-        "Kolom durasi probabilistik berasal dari hasil Monte Carlo, sedangkan "
-        "durasi path deterministik mengikuti network diagram, yaitu EF aktivitas "
-        "terakhir pada jadwal deterministik."
+        "Kolom 'Durasi Path Deterministik' dihitung dari jadwal deterministik berbasis mean productivity. "
+        f"Kolom '{diagram_duration_column}' mengikuti nilai path yang benar-benar tergambar pada network diagram "
+        f"untuk basis durasi proyek {selected_percentile_label}. "
+        "Jika membutuhkan rerata total durasi proyek saat suatu path menjadi lintasan kritis, gunakan tabel "
+        "'Analisis Probabilistic Lintasan Kritis' di atas."
     )
     render_table(
         df_network_legend,
         formats={
             "Durasi Path Deterministik": "{:.3f}",
-            "Rata-rata Durasi Probabilistik": "{:.3f}",
+            diagram_duration_column: "{:.3f}",
             "Prob": "{:.3f}"
         }
     )
-    network_fig = plot_network_diagram(df_proj, df_path, deterministic_schedule)
+    network_fig = plot_network_diagram(df_proj, df_path, network_schedule)
     zoomable_network_fig = build_zoomable_network_figure(network_fig)
 
     if zoomable_network_fig is not None:
@@ -2500,8 +2724,8 @@ if st.button("Jalankan Simulasi"):
         st.pyplot(network_fig)
     render_jpg_download_button(
         network_fig,
-        "network_diagram_analisis_probabilistik",
-        key="download_network_diagram_probabilistik"
+        f"network_diagram_analisis_probabilistik_{selected_percentile_label.lower()}",
+        key=f"download_network_diagram_probabilistik_{selected_percentile_label.lower()}"
     )
     plt.close(network_fig)
 
